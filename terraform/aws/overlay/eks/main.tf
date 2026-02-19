@@ -38,7 +38,7 @@ module "vpc" {
     var.cidr_block_private2,
     var.cidr_block_private3
   ]
-  public_subnets  = [
+  public_subnets = [
     var.cidr_block_public1,
     var.cidr_block_public2,
     var.cidr_block_public3
@@ -146,7 +146,7 @@ module "eks" {
           }
         }
       }
-  }
+    }
   }
 
   tags = {

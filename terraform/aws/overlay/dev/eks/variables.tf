@@ -148,7 +148,7 @@ variable "access_entries" {
   type = map(object({
     kubernetes_groups = optional(list(string), [])
     principal_arn     = string
-    user_name        = optional(string)
+    user_name         = optional(string)
     policy_associations = optional(map(object({
       policy_arn = string
       access_scope = object({

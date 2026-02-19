@@ -4,10 +4,10 @@
 terraform {
 
   backend "s3" {
-    bucket = "terraf0rmstate1"
-    key    = "EKS/KP/terraform.tfstate"
+    bucket  = "terraf0rmstate1"
+    key     = "EKS/KP/terraform.tfstate"
     encrypt = true
-    region = "eu-west-1"
+    region  = "eu-west-1"
   }
 
   # cloud {
@@ -45,5 +45,5 @@ terraform {
   required_version = ">= 1.5.7"
 }
 
-  
+
 

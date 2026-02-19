@@ -1,7 +1,7 @@
 # Development Environment Configuration
 terraform {
   required_version = ">= 1.5.7"
-  
+
   backend "s3" {
     bucket  = "terraf0rmstate1"
     key     = "eks/dev/terraform.tfstate"
@@ -60,8 +60,8 @@ data "aws_caller_identity" "current" {}
 locals {
   environment  = "dev"
   cluster_name = "${local.environment}-eks-cluster"
-  azs         = slice(data.aws_availability_zones.available.names, 0, 3)
-  
+  azs          = slice(data.aws_availability_zones.available.names, 0, 3)
+
   common_tags = {
     Environment = local.environment
     Project     = "EKS-DevOps"
@@ -82,10 +82,10 @@ module "vpc" {
   private_subnets = var.private_subnets
   public_subnets  = var.public_subnets
 
-  enable_nat_gateway     = var.enable_nat_gateway
-  single_nat_gateway     = var.single_nat_gateway
-  enable_dns_hostnames   = var.enable_dns_hostnames
-  enable_dns_support     = true
+  enable_nat_gateway   = var.enable_nat_gateway
+  single_nat_gateway   = var.single_nat_gateway
+  enable_dns_hostnames = var.enable_dns_hostnames
+  enable_dns_support   = true
 
   # EKS tags
   public_subnet_tags = {
@@ -108,11 +108,11 @@ module "eks" {
   cluster_version = var.cluster_version
 
   # Network configuration
-  vpc_id                         = module.vpc.vpc_id
-  subnet_ids                     = module.vpc.private_subnets
-  control_plane_subnet_ids       = module.vpc.private_subnets
-  cluster_endpoint_public_access = var.cluster_endpoint_public_access
-  cluster_endpoint_private_access = var.cluster_endpoint_private_access
+  vpc_id                               = module.vpc.vpc_id
+  subnet_ids                           = module.vpc.private_subnets
+  control_plane_subnet_ids             = module.vpc.private_subnets
+  cluster_endpoint_public_access       = var.cluster_endpoint_public_access
+  cluster_endpoint_private_access      = var.cluster_endpoint_private_access
   cluster_endpoint_public_access_cidrs = var.cluster_endpoint_public_access_cidrs
 
   # Cluster addons
@@ -149,16 +149,16 @@ module "eks" {
   }
 
   create_iam_role = true
-  
+
   # EKS Managed Node Groups
   eks_managed_node_groups = {
     default = {
-      name               = var.node_group_name
+      name                     = var.node_group_name
       iam_role_use_name_prefix = false
-      ami_type           = var.ami_type
-      instance_types     = [var.node_group_instance_type]
-      capacity_type      = var.node_group_capacity_type
-      disk_size          = var.node_group_disk_size
+      ami_type                 = var.ami_type
+      instance_types           = [var.node_group_instance_type]
+      capacity_type            = var.node_group_capacity_type
+      disk_size                = var.node_group_disk_size
 
       min_size     = var.node_min_size
       max_size     = var.node_max_size
