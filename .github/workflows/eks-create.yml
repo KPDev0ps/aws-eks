@@ -1,0 +1,518 @@
+name: "🚀 EKS Deploy & Manage"
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      action:
+        description: 'Action to perform'
+        required: true
+        default: 'plan'
+        type: choice
+        options:
+          - plan
+          - apply
+          - drift-detect
+      auto_approve:
+        description: 'Auto-approve apply (use with caution)'
+        required: false
+        default: false
+        type: boolean
+      notification_channel:
+        description: 'Slack channel for notifications (optional)'
+        required: false
+        type: string
+  pull_request:
+    paths:
+      - 'terraform/**'
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+  issues: write
+  checks: write
+
+env:
+  AWS_REGION: us-east-2
+  TF_VERSION: "1.8.0"
+  TF_LOG: INFO
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+concurrency:
+  group: eks-${{ github.event.inputs.environment || 'pr' }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  setup-and-validate:
+    name: "🔍 Setup & Validation"
+    runs-on: ubuntu-latest
+    outputs:
+      tf-dir: ${{ steps.setup.outputs.tf-dir }}
+      environment: ${{ steps.setup.outputs.environment }}
+      pr-number: ${{ steps.setup.outputs.pr-number }}
+      
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: ⚙️ Setup Environment
+        id: setup
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "environment=dev" >> $GITHUB_OUTPUT  # Default to dev for PRs
+            echo "tf-dir=terraform/aws/overlay/dev/eks" >> $GITHUB_OUTPUT
+            echo "pr-number=${{ github.event.number }}" >> $GITHUB_OUTPUT
+          else
+            echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+            echo "tf-dir=terraform/aws/overlay/${{ github.event.inputs.environment }}/eks" >> $GITHUB_OUTPUT
+            echo "pr-number=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 🛡️ Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: "${{ secrets.OIDC_ROLE_ARN }}"
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 3600
+          
+      - name: 🏗️ Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+          
+      - name: 📋 Cache Terraform
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.terraform.d/plugin-cache
+          key: ${{ runner.os }}-terraform-${{ hashFiles('**/.terraform.lock.hcl') }}
+          restore-keys: |
+            ${{ runner.os }}-terraform-
+            
+      - name: 🎯 Terraform Init
+        working-directory: ${{ steps.setup.outputs.tf-dir }}
+        run: |
+          terraform init -reconfigure -upgrade
+          
+      - name: ✅ Terraform Validate
+        working-directory: ${{ steps.setup.outputs.tf-dir }}
+        run: terraform validate
+        
+      - name: 🎨 Terraform Format Check
+        working-directory: ${{ steps.setup.outputs.tf-dir }}
+        run: |
+          if ! terraform fmt -check -recursive; then
+            echo "❌ Terraform files are not formatted properly"
+            echo "Run: terraform fmt -recursive" 
+            exit 1
+          fi
+          
+  security-scan:
+    name: "🔒 Security Scanning"
+    runs-on: ubuntu-latest
+    needs: setup-and-validate
+    
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: 🛡️ Run Trivy Security Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'config'
+          scan-ref: ${{ needs.setup-and-validate.outputs.tf-dir }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          
+      - name: 📊 Upload Trivy Results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+          
+      - name: 🔍 Run Checkov Security Scan
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: ${{ needs.setup-and-validate.outputs.tf-dir }}
+          framework: terraform
+          output_format: cli,sarif
+          output_file_path: console,checkov-results.sarif
+          
+      - name: 📤 Upload Checkov Results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: checkov-results.sarif
+          
+  cost-estimation:
+    name: "💰 Cost Estimation"
+    runs-on: ubuntu-latest
+    needs: setup-and-validate
+    if: github.event.inputs.action == 'plan' || github.event_name == 'pull_request'
+    
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: 🛡️ Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: "${{ secrets.OIDC_ROLE_ARN }}"
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: 🏗️ Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+          
+      - name: 🎯 Terraform Init
+        working-directory: ${{ needs.setup-and-validate.outputs.tf-dir }}
+        run: terraform init -reconfigure
+        
+      - name: 💵 Setup Infracost
+        uses: infracost/actions/setup@v2
+        with:
+          api-key: ${{ secrets.INFRACOST_API_KEY }}
+          
+      - name: 📊 Generate Cost Estimate
+        working-directory: ${{ needs.setup-and-validate.outputs.tf-dir }}
+        run: |
+          infracost breakdown --path . \
+            --format json \
+            --out-file /tmp/infracost.json
+          infracost output --path /tmp/infracost.json \
+            --format table \
+            --out-file /tmp/infracost.txt
+            
+          
+  terraform-plan:
+    name: "📋 Terraform Plan"
+    runs-on: ubuntu-latest
+    needs: [setup-and-validate, security-scan]
+    if: always() && needs.setup-and-validate.result == 'success' && needs.security-scan.result == 'success'
+    environment: ${{ needs.setup-and-validate.outputs.environment }}
+    outputs:
+      plan-exitcode: ${{ steps.plan.outputs.exitcode }}
+      
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: 🛡️ Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: "${{ secrets.OIDC_ROLE_ARN }}"
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: 🏗️ Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+          
+      - name: 📋 Cache Terraform
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.terraform.d/plugin-cache
+          key: ${{ runner.os }}-terraform-${{ hashFiles('**/.terraform.lock.hcl') }}
+          
+      - name: 🎯 Terraform Init
+        working-directory: ${{ needs.setup-and-validate.outputs.tf-dir }}
+        run: terraform init -reconfigure
+
+      - name: 📊 Terraform Plan
+        id: plan
+        working-directory: ${{ needs.setup-and-validate.outputs.tf-dir }}
+        run: |
+          set -e
+          
+          if [[ "${{ github.event.inputs.action }}" == "drift-detect" ]]; then
+            echo "🔍 Running drift detection..."
+            terraform plan -detailed-exitcode -no-color -out=tfplan.out -input=false > plan.txt 2>&1 || EXIT_CODE=$?
+          else
+            terraform plan -detailed-exitcode -no-color -out=tfplan.out -input=false > plan.txt 2>&1 || EXIT_CODE=$?
+          fi
+          
+          echo "exitcode=$EXIT_CODE" >> $GITHUB_OUTPUT
+          
+          # Format plan output for PR comment
+          if [[ -f plan.txt ]]; then
+            echo "PLAN_OUTPUT<<EOF" >> $GITHUB_ENV
+            cat plan.txt >> $GITHUB_ENV
+            echo "EOF" >> $GITHUB_ENV
+          fi
+          
+          # Generate executive summary
+          echo "## 📊 Terraform Plan Summary" >> plan-summary.md
+          echo "" >> plan-summary.md
+          echo "**Environment:** ${{ needs.setup-and-validate.outputs.environment }}" >> plan-summary.md
+          echo "**Action:** ${{ github.event.inputs.action || 'plan' }}" >> plan-summary.md
+          echo "**Region:** ${{ env.AWS_REGION }}" >> plan-summary.md
+          echo "" >> plan-summary.md
+          
+          if [[ $EXIT_CODE -eq 0 ]]; then
+            echo "✅ **Result:** No changes detected" >> plan-summary.md
+          elif [[ $EXIT_CODE -eq 2 ]]; then
+            echo "📝 **Result:** Changes detected" >> plan-summary.md
+            echo "" >> plan-summary.md
+            
+            # Parse plan output for resource changes
+            add_count=$(grep -o 'Plan: [0-9]* to add' plan.txt | grep -o '[0-9]*' || echo "0")
+            change_count=$(grep -o '[0-9]* to change' plan.txt | grep -o '[0-9]*' || echo "0") 
+            destroy_count=$(grep -o '[0-9]* to destroy' plan.txt | grep -o '[0-9]*' || echo "0")
+            
+            echo "| Action | Count |" >> plan-summary.md
+            echo "|--------|-------|" >> plan-summary.md
+            echo "| 🆕 Add | ${add_count} |" >> plan-summary.md
+            echo "| 🔄 Change | ${change_count} |" >> plan-summary.md
+            echo "| 🗑️ Destroy | ${destroy_count} |" >> plan-summary.md
+          else
+            echo "❌ **Result:** Plan failed" >> plan-summary.md
+            exit $EXIT_CODE
+          fi
+          
+      - name: 📤 Upload Plan Artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: terraform-plan-${{ needs.setup-and-validate.outputs.environment }}-${{ github.run_number }}
+          path: |
+            ${{ needs.setup-and-validate.outputs.tf-dir }}/plan.txt
+            ${{ needs.setup-and-validate.outputs.tf-dir }}/plan-summary.md
+            ${{ needs.setup-and-validate.outputs.tf-dir }}/tfplan.out
+          retention-days: 30
+          
+      - name: 💬 Comment Plan on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = '${{ needs.setup-and-validate.outputs.tf-dir }}/plan-summary.md';
+            
+            if (fs.existsSync(path)) {
+              const summary = fs.readFileSync(path, 'utf8');
+              const planOutput = process.env.PLAN_OUTPUT;
+              
+              const comment = `${summary}
+              
+            <details>
+            <summary>📋 View Full Plan Output</summary>
+            
+            \`\`\`hcl
+            ${planOutput}
+            \`\`\`
+            </details>
+            
+            ---
+            *Automatically generated by [EKS Deploy & Manage](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})*`;
+              
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: comment
+              });
+            }
+
+  terraform-apply:
+    name: "🚀 Terraform Apply"
+    runs-on: ubuntu-latest
+    if: |
+      github.event.inputs.action == 'apply' && 
+      needs.terraform-plan.result == 'success' && 
+      needs.terraform-plan.outputs.plan-exitcode == '2'
+    needs: [setup-and-validate, terraform-plan]
+    environment: 
+      name: ${{ needs.setup-and-validate.outputs.environment }}
+      url: "https://console.aws.amazon.com/eks/home?region=${{ env.AWS_REGION }}#/clusters"
+      
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: 🛡️ Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: "${{ secrets.OIDC_ROLE_ARN }}"
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: 🏗️ Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+          
+      - name: 📥 Download Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan-${{ needs.setup-and-validate.outputs.environment }}-${{ github.run_number }}
+          path: ${{ needs.setup-and-validate.outputs.tf-dir }}
+          
+      - name: 🎯 Terraform Init
+        working-directory: ${{ needs.setup-and-validate.outputs.tf-dir }}
+        run: terraform init -reconfigure
+        
+      - name: ⏱️ Apply with Timeout
+        working-directory: ${{ needs.setup-and-validate.outputs.tf-dir }}
+        timeout-minutes: 60
+        run: |
+          echo "🚀 Starting Terraform Apply..."
+          start_time=$(date +%s)
+          
+          if [[ "${{ github.event.inputs.auto_approve }}" == "true" ]]; then
+            terraform apply -input=false -auto-approve tfplan.out
+          else
+            terraform apply -input=false tfplan.out
+          fi
+          
+          end_time=$(date +%s)
+          duration=$((end_time - start_time))
+          echo "⏱️ Apply completed in ${duration} seconds"
+          
+      - name: 📊 Generate Deployment Report
+        working-directory: ${{ needs.setup-and-validate.outputs.tf-dir }}
+        run: |
+          echo "## 🚀 Deployment Complete!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📋 Cluster Information:" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment:** ${{ needs.setup-and-validate.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Region:** ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deployed At:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> $GITHUB_STEP_SUMMARY
+          echo "- **Workflow:** [${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Get cluster information
+          if terraform output cluster_name >/dev/null 2>&1; then
+            CLUSTER_NAME=$(terraform output -raw cluster_name)
+            CLUSTER_ENDPOINT=$(terraform output -raw cluster_endpoint)
+            CLUSTER_VERSION=$(terraform output -raw cluster_version)
+            KUBECTL_CMD=$(terraform output -raw kubectl_config)
+            
+            echo "### 🎯 EKS Cluster Details:" >> $GITHUB_STEP_SUMMARY
+            echo "- **Cluster Name:** \`$CLUSTER_NAME\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **Kubernetes Version:** \`$CLUSTER_VERSION\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **Endpoint:** \`$CLUSTER_ENDPOINT\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🔗 Connect to your cluster:" >> $GITHUB_STEP_SUMMARY
+            echo '```bash' >> $GITHUB_STEP_SUMMARY
+            echo "$KUBECTL_CMD" >> $GITHUB_STEP_SUMMARY
+            echo "kubectl get nodes" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            # AWS Console Links
+            echo "### 🌐 AWS Console Links:" >> $GITHUB_STEP_SUMMARY
+            echo "- [EKS Console](https://console.aws.amazon.com/eks/home?region=${{ env.AWS_REGION }}#/clusters/$CLUSTER_NAME)" >> $GITHUB_STEP_SUMMARY
+            echo "- [VPC Console](https://console.aws.amazon.com/vpc/home?region=${{ env.AWS_REGION }}#vpcs:)" >> $GITHUB_STEP_SUMMARY
+            echo "- [CloudWatch Logs](https://console.aws.amazon.com/cloudwatch/home?region=${{ env.AWS_REGION }}#logsV2:log-groups)" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Resource summary  
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Deployed Resources:" >> $GITHUB_STEP_SUMMARY
+          terraform state list | while read resource; do
+            echo "- \`$resource\`" >> $GITHUB_STEP_SUMMARY
+          done
+
+      - name: 🔔 Post-deployment Health Check
+        working-directory: ${{ needs.setup-and-validate.outputs.tf-dir }}
+        run: |
+          echo "🏥 Running post-deployment health checks..."
+          
+          # Get cluster name
+          CLUSTER_NAME=$(terraform output -raw cluster_name)
+          
+          # Check cluster status
+          aws eks describe-cluster --name $CLUSTER_NAME --region ${{ env.AWS_REGION }} --query 'cluster.status' --output text
+          
+          # Check node groups
+          aws eks list-nodegroups --cluster-name $CLUSTER_NAME --region ${{ env.AWS_REGION }}
+          
+          echo "✅ Health check completed"
+
+  notify:
+    name: "🔔 Notifications"
+    runs-on: ubuntu-latest
+    if: always() && github.event.inputs.notification_channel != ''
+    needs: [setup-and-validate, terraform-plan, terraform-apply]
+    
+    steps:
+      - name: 📤 Send Slack Notification
+        if: github.event.inputs.notification_channel != ''
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_CHANNEL: ${{ github.event.inputs.notification_channel }}
+          SLACK_COLOR: ${{ needs.terraform-apply.result == 'success' && 'good' || needs.terraform-apply.result == 'failure' && 'danger' || 'warning' }}
+          SLACK_MESSAGE: |
+            *EKS Deployment Status:* ${{ needs.terraform-apply.result || 'planned' }}
+            *Environment:* ${{ needs.setup-and-validate.outputs.environment }}
+            *Action:* ${{ github.event.inputs.action }}
+            *Triggered by:* ${{ github.actor }}
+            *Workflow:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Details>
+
+      - name: Terraform Plan
+        id: plan
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          terraform plan -no-color -out=tfplan -input=false
+          terraform show -no-color tfplan > plan.txt
+        continue-on-error: false
+
+      - name: Upload Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-${{ github.event.inputs.environment }}
+          path: ${{ env.TF_DIR }}/plan.txt
+          retention-days: 5
+
+      - name: Terraform Apply
+        if: github.event.inputs.action == 'apply'
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          terraform apply -input=false -auto-approve tfplan
+        continue-on-error: false
+
+      - name: Post-deployment Information
+        if: github.event.inputs.action == 'apply'
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          echo "## Deployment Complete! 🚀" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Cluster Information:" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment:** ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Region:** ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Get outputs if available
+          if terraform output cluster_name >/dev/null 2>&1; then
+            CLUSTER_NAME=$(terraform output -raw cluster_name)
+            KUBECTL_CMD=$(terraform output -raw kubectl_config)
+            echo "- **Cluster Name:** $CLUSTER_NAME" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Connect to your cluster:" >> $GITHUB_STEP_SUMMARY
+            echo '```bash' >> $GITHUB_STEP_SUMMARY
+            echo "$KUBECTL_CMD" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi

@@ -1,0 +1,28 @@
+# Example Terraform Variables
+# 
+# This file shows example configurations for different environments.
+# Copy the relevant environment's terraform.tfvars.example to terraform.tfvars
+# and customize the values for your deployment.
+#
+# For environment-specific configurations, see:
+# - environments/dev/terraform.tfvars.example
+# - environments/staging/terraform.tfvars.example  
+# - environments/prod/terraform.tfvars.example
+
+# Common AWS Configuration
+aws_region = "eu-west-1"  # Choose your preferred region
+aws_profile = null        # Set to your AWS profile name if using profiles
+
+# Example for different environments:
+# 
+# Development:
+# aws_region = "eu-west-1"
+# aws_profile = "dev-profile"
+#
+# Staging:  
+# aws_region = "eu-west-1"
+# aws_profile = "staging-profile"
+#
+# Production:
+# aws_region = "eu-west-1" 
+# aws_profile = "prod-profile"

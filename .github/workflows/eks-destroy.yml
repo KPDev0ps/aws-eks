@@ -1,0 +1,398 @@
+name: "💥 EKS Destroy & Cleanup"
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to destroy'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      confirm_destroy:
+        description: 'Type "DESTROY" to confirm destruction'
+        required: true
+        type: string
+      backup_check:
+        description: 'Confirm backups are taken (required for prod)'
+        required: false
+        default: false
+        type: boolean
+      force_destroy:
+        description: 'Force destroy even with errors (dangerous)'
+        required: false
+        default: false
+        type: boolean
+      notification_channel:
+        description: 'Slack channel for notifications (optional)'
+        required: false
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+  issues: write
+  checks: write
+
+env:
+  AWS_REGION: us-east-2
+  TF_VERSION: "1.8.0"
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+concurrency:
+  group: eks-destroy-${{ github.event.inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  validate-destroy-request:
+    name: "🛡️ Validate Destroy Request"
+    runs-on: ubuntu-latest
+    outputs:
+      tf-dir: ${{ steps.setup.outputs.tf-dir }}
+      
+    steps:
+      - name: ✅ Validate Confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirm_destroy }}" != "DESTROY" ]; then
+            echo "❌ Confirmation failed. You must type 'DESTROY' exactly to proceed."
+            echo "::error::Invalid confirmation. Expected 'DESTROY', got '${{ github.event.inputs.confirm_destroy }}'"
+            exit 1
+          fi
+          echo "✅ Confirmation validated"
+          
+      - name: 🔒 Production Safety Check
+        if: github.event.inputs.environment == 'prod'
+        run: |
+          if [[ "${{ github.event.inputs.backup_check }}" != "true" ]]; then
+            echo "❌ Production destruction requires backup confirmation"
+            echo "::error::Please confirm backups are taken before destroying production environment"
+            exit 1
+          fi
+          echo "✅ Production backup check confirmed"
+          
+      - name: ⚙️ Setup Environment
+        id: setup
+        run: |
+          echo "tf-dir=terraform/aws/overlay/${{ github.event.inputs.environment }}/eks" >> $GITHUB_OUTPUT
+          echo "📋 Environment: ${{ github.event.inputs.environment }}"
+          echo "📁 Terraform Directory: terraform/aws/overlay/${{ github.event.inputs.environment }}/eks"
+          
+      - name: 🔔 Send Warning Notification
+        if: github.event.inputs.notification_channel != ''
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_CHANNEL: ${{ github.event.inputs.notification_channel }}
+          SLACK_COLOR: 'warning'
+          SLACK_MESSAGE: |
+            ⚠️ *EKS DESTRUCTION INITIATED*
+            *Environment:* ${{ github.event.inputs.environment }}
+            *Initiated by:* ${{ github.actor }}
+            *Time:* $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+            
+            🚫 **CAUTION:** Infrastructure destruction in progress!
+            🔗 *Workflow:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|Monitor Progress>
+
+  resource-inventory:
+    name: "📋 Resource Inventory"
+    runs-on: ubuntu-latest
+    needs: validate-destroy-request
+    outputs:
+      has-resources: ${{ steps.inventory.outputs.has-resources }}
+      
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: 🛡️ Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: "${{ secrets.OIDC_ROLE_ARN }}"
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 3600
+          
+      - name: 🏗️ Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+          
+      - name: 🎯 Terraform Init
+        working-directory: ${{ needs.validate-destroy-request.outputs.tf-dir }}
+        run: terraform init -reconfigure
+        
+      - name: 📋 Generate Resource Inventory
+        id: inventory
+        working-directory: ${{ needs.validate-destroy-request.outputs.tf-dir }}
+        run: |
+          echo "📋 Generating resource inventory..."
+          
+          # Get current state
+          if terraform state list > /tmp/resources.txt 2>/dev/null; then
+            resource_count=$(wc -l < /tmp/resources.txt)
+            if [ $resource_count -gt 0 ]; then
+              echo "has-resources=true" >> $GITHUB_OUTPUT
+              echo "📊 Found $resource_count resources to destroy"
+              
+              # Generate detailed inventory
+              echo "## 📋 Resource Inventory" > /tmp/inventory.md
+              echo "" >> /tmp/inventory.md
+              echo "**Environment:** ${{ github.event.inputs.environment }}" >> /tmp/inventory.md
+              echo "**Total Resources:** $resource_count" >> /tmp/inventory.md
+              echo "" >> /tmp/inventory.md
+              echo "### Resources to be destroyed:" >> /tmp/inventory.md
+              
+              while read resource; do
+                echo "- \`$resource\`" >> /tmp/inventory.md
+              done < /tmp/resources.txt
+              
+              # Get EKS-specific resources
+              if terraform output cluster_name >/dev/null 2>&1; then
+                CLUSTER_NAME=$(terraform output -raw cluster_name)
+                echo "" >> /tmp/inventory.md
+                echo "### 🎯 EKS Cluster Information:" >> /tmp/inventory.md
+                echo "- **Cluster Name:** \`$CLUSTER_NAME\`" >> /tmp/inventory.md
+                
+                # Check for critical resources
+                echo "" >> /tmp/inventory.md
+                echo "### ⚠️ Critical Checks:" >> /tmp/inventory.md
+                
+                # Check for Load Balancers
+                lb_count=$(aws elbv2 describe-load-balancers --region ${{ env.AWS_REGION }} --query 'LoadBalancers[?contains(LoadBalancerName, `k8s`)]' --output text | wc -l || echo "0")
+                echo "- **Load Balancers:** $lb_count (may need manual cleanup)" >> /tmp/inventory.md
+                
+                # Check for EBS volumes
+                ebs_count=$(aws ec2 describe-volumes --region ${{ env.AWS_REGION }} --filters "Name=tag-key,Values=kubernetes.io/cluster/$CLUSTER_NAME" --query 'Volumes[].VolumeId' --output text | wc -w || echo "0")
+                echo "- **EBS Volumes:** $ebs_count (data will be permanently lost)" >> /tmp/inventory.md
+              fi
+            else
+              echo "has-resources=false" >> $GITHUB_OUTPUT
+              echo "ℹ️ No resources found to destroy"
+            fi
+          else
+            echo "has-resources=false" >> $GITHUB_OUTPUT
+            echo "ℹ️ No Terraform state found"
+          fi
+          
+      - name: 📤 Upload Inventory
+        if: steps.inventory.outputs.has-resources == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: resource-inventory-${{ github.event.inputs.environment }}
+          path: /tmp/inventory.md
+          retention-days: 90
+
+  terraform-destroy:
+    name: "💥 Terraform Destroy"
+    runs-on: ubuntu-latest
+    needs: [validate-destroy-request, resource-inventory]
+    if: needs.resource-inventory.outputs.has-resources == 'true'
+    environment: 
+      name: ${{ github.event.inputs.environment }}
+      
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: 🛡️ Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: "${{ secrets.OIDC_ROLE_ARN }}"
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: 🏗️ Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+          
+      - name: 🎯 Terraform Init
+        working-directory: ${{ needs.validate-destroy-request.outputs.tf-dir }}
+        run: terraform init -reconfigure
+        
+      - name: 📊 Pre-Destruction Health Check
+        working-directory: ${{ needs.validate-destroy-request.outputs.tf-dir }}
+        run: |
+          echo "🏥 Running pre-destruction health check..."
+          
+          # Get cluster information if exists
+          if terraform output cluster_name >/dev/null 2>&1; then
+            CLUSTER_NAME=$(terraform output -raw cluster_name)
+            echo "📊 Checking cluster: $CLUSTER_NAME"
+            
+            # Check cluster status
+            aws eks describe-cluster --name $CLUSTER_NAME --region ${{ env.AWS_REGION }} --query 'cluster.status' --output text || echo "Cluster not found or not accessible"
+            
+            # List node groups
+            aws eks list-nodegroups --cluster-name $CLUSTER_NAME --region ${{ env.AWS_REGION }} || echo "No node groups found"
+          fi
+          
+      - name: 📋 Terraform Plan Destroy
+        working-directory: ${{ needs.validate-destroy-request.outputs.tf-dir }}
+        run: |
+          terraform plan -destroy -detailed-exitcode -no-color -out=destroy.tfplan -input=false > destroy-plan.txt 2>&1 || EXIT_CODE=$?
+          
+          echo "## 💥 Destruction Plan Summary" >> destroy-summary.md
+          echo "**Environment:** ${{ github.event.inputs.environment }}" >> destroy-summary.md
+          echo "**Timestamp:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> destroy-summary.md
+          echo "" >> destroy-summary.md
+          
+          if [[ $EXIT_CODE -eq 2 ]]; then
+            echo "📝 **Result:** Resources will be destroyed" >> destroy-summary.md
+            
+            # Parse plan output for resource changes
+            destroy_count=$(grep -o '[0-9]* to destroy' destroy-plan.txt | grep -o '[0-9]*' || echo "0")
+            echo "**Resources to destroy:** $destroy_count" >> destroy-summary.md
+          elif [[ $EXIT_CODE -eq 0 ]]; then
+            echo "ℹ️ **Result:** No resources to destroy" >> destroy-summary.md
+          else
+            echo "❌ **Result:** Destroy plan failed" >> destroy-summary.md
+            exit $EXIT_CODE
+          fi
+          
+      - name: 📤 Upload Destroy Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-destroy-plan-${{ github.event.inputs.environment }}-${{ github.run_number }}
+          path: |
+            ${{ needs.validate-destroy-request.outputs.tf-dir }}/destroy-plan.txt
+            ${{ needs.validate-destroy-request.outputs.tf-dir }}/destroy-summary.md
+            ${{ needs.validate-destroy-request.outputs.tf-dir }}/destroy.tfplan
+          retention-days: 90
+          
+      - name: ⚠️ Final Confirmation Wait
+        if: github.event.inputs.environment == 'prod'
+        run: |
+          echo "⚠️ FINAL WARNING: About to destroy PRODUCTION environment!"
+          echo "Waiting 30 seconds for manual cancellation..."
+          for i in {30..1}; do
+            echo "⏳ $i seconds remaining..."
+            sleep 1
+          done
+          echo "🚨 Proceeding with destruction!"
+          
+      - name: 💥 Execute Destruction
+        working-directory: ${{ needs.validate-destroy-request.outputs.tf-dir }}
+        timeout-minutes: 60
+        continue-on-error: ${{ github.event.inputs.force_destroy == 'true' }}
+        run: |
+          echo "🚨 Starting infrastructure destruction for environment: ${{ github.event.inputs.environment }}"
+          start_time=$(date +%s)
+          
+          terraform apply -input=false -auto-approve destroy.tfplan
+          
+          end_time=$(date +%s)
+          duration=$((end_time - start_time))
+          echo "⏱️ Destruction completed in ${duration} seconds"
+          
+      - name: 🧹 Post-Destruction Cleanup
+        working-directory: ${{ needs.validate-destroy-request.outputs.tf-dir }}
+        continue-on-error: true
+        run: |
+          echo "🧹 Running post-destruction cleanup..."
+          
+          # Check if any resources remain
+          remaining=$(terraform state list 2>/dev/null | wc -l || echo "0")
+          if [ "$remaining" -gt 0 ]; then
+            echo "⚠️ Warning: $remaining resources remain in state"
+            terraform state list
+          else
+            echo "✅ All resources successfully destroyed"
+          fi
+          
+          # Manual cleanup checks for common leftover resources
+          echo "" 
+          echo "🔍 Checking for manual cleanup requirements..."
+          
+          # Check for orphaned EBS volumes
+          orphaned_ebs=$(aws ec2 describe-volumes --region ${{ env.AWS_REGION }} --filters "Name=tag-key,Values=Environment" "Name=tag-value,Values=${{ github.event.inputs.environment }}" --query 'Volumes[?State==`available`].VolumeId' --output text | wc -w || echo "0")
+          if [ "$orphaned_ebs" -gt 0 ]; then
+            echo "⚠️ Found $orphaned_ebs orphaned EBS volumes that may need manual cleanup"
+          fi
+          
+          # Check for orphaned security groups
+          orphaned_sg=$(aws ec2 describe-security-groups --region ${{ env.AWS_REGION }} --filters "Name=tag-key,Values=Environment" "Name=tag-value,Values=${{ github.event.inputs.environment }}" --query 'SecurityGroups[?GroupName!=`default`].GroupId' --output text | wc -w || echo "0")
+          if [ "$orphaned_sg" -gt 0 ]; then
+            echo "⚠️ Found $orphaned_sg orphaned security groups that may need manual cleanup"
+          fi
+          
+      - name: 📊 Generate Destruction Report
+        run: |
+          echo "## 💥 Destruction Complete!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📋 Destruction Summary:" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment:** ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Region:** ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Destroyed At:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> $GITHUB_STEP_SUMMARY
+          echo "- **Initiated by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Workflow:** [${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ✅ Next Steps:" >> $GITHUB_STEP_SUMMARY
+          echo "- Review AWS Console for any orphaned resources" >> $GITHUB_STEP_SUMMARY
+          echo "- Check CloudWatch for any remaining log groups" >> $GITHUB_STEP_SUMMARY
+          echo "- Verify S3 buckets (if any) are cleaned up" >> $GITHUB_STEP_SUMMARY
+          echo "- Update any DNS records that pointed to destroyed resources" >> $GITHUB_STEP_SUMMARY
+
+  cleanup-verification:
+    name: "🔍 Cleanup Verification"
+    runs-on: ubuntu-latest
+    needs: [validate-destroy-request, terraform-destroy]
+    if: always() && needs.terraform-destroy.result != 'skipped'
+    
+    steps:
+      - name: 🛡️ Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: "${{ secrets.OIDC_ROLE_ARN }}"
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: 🔍 Verify Cleanup
+        run: |
+          echo "🔍 Verifying cleanup completion..."
+          
+          # Check for any remaining EKS clusters with our tags
+          remaining_clusters=$(aws eks list-clusters --region ${{ env.AWS_REGION }} --output text | grep -E "(dev|staging|prod)-eks-cluster" || echo "")
+          if [ -n "$remaining_clusters" ]; then
+            echo "⚠️ Warning: Found remaining EKS clusters: $remaining_clusters"
+          else
+            echo "✅ No EKS clusters remain"
+          fi
+          
+          # Check for VPCs with our environment tag
+          remaining_vpcs=$(aws ec2 describe-vpcs --region ${{ env.AWS_REGION }} --filters "Name=tag:Environment,Values=${{ github.event.inputs.environment }}" --query 'Vpcs[].VpcId' --output text || echo "")
+          if [ -n "$remaining_vpcs" ] && [ "$remaining_vpcs" != "None" ]; then
+            echo "⚠️ Warning: Found remaining VPCs: $remaining_vpcs"
+          else
+            echo "✅ No tagged VPCs remain"
+          fi
+          
+          echo "🏁 Cleanup verification completed"
+
+  notify-completion:
+    name: "🔔 Final Notification"
+    runs-on: ubuntu-latest
+    if: always() && github.event.inputs.notification_channel != ''
+    needs: [validate-destroy-request, terraform-destroy, cleanup-verification]
+    
+    steps:
+      - name: 📤 Send Completion Notification
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_CHANNEL: ${{ github.event.inputs.notification_channel }}
+          SLACK_COLOR: ${{ needs.terraform-destroy.result == 'success' && 'good' || 'danger' }}
+          SLACK_MESSAGE: |
+            ${{ needs.terraform-destroy.result == 'success' && '✅' || '❌' }} *EKS DESTRUCTION COMPLETED*
+            
+            *Environment:* ${{ github.event.inputs.environment }}
+            *Status:* ${{ needs.terraform-destroy.result }}
+            *Completed by:* ${{ github.actor }}
+            *Completion Time:* $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+            
+            ${{ needs.terraform-destroy.result == 'success' && '🎉 Infrastructure successfully destroyed!' || '⚠️ Destruction encountered issues - manual review required' }}
+            
+            📊 *Cleanup Status:* ${{ needs.cleanup-verification.result }}
+            🔗 *Full Report:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Details>
