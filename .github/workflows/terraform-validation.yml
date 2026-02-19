@@ -140,10 +140,15 @@ jobs:
           # Check for common issues
           echo "🔍 Linting ${{ matrix.environment }} configuration..."
           
-          # Check for hardcoded values
-          if grep -r "803103365620" . || grep -r "hardcoded" .; then
-            echo "❌ Found hardcoded values in ${{ matrix.environment }}"
+          # Check for hardcoded values in Terraform files only (exclude .terraform and docs)
+          if find . -name "*.tf" -o -name "*.tfvars" | xargs grep -l "803103365620" 2>/dev/null; then
+            echo "❌ Found hardcoded account IDs in ${{ matrix.environment }}"
             exit 1
+          fi
+          
+          # Check for TODO/FIXME/HACK comments that might indicate incomplete configuration
+          if find . -name "*.tf" -o -name "*.tfvars" | xargs grep -i "TODO\|FIXME\|HACK" 2>/dev/null; then
+            echo "⚠️ Found TODO/FIXME/HACK comments in ${{ matrix.environment }}"
           fi
           
           # Check for environment-specific naming
