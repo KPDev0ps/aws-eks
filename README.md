@@ -20,7 +20,8 @@ A complete, production-ready solution for deploying Amazon EKS clusters using Te
 │   ├── actions/                     # Custom GitHub Actions
 │   │   └── tf-matrix/              # Terraform change detection action
 │   └── workflows/                   # GitHub Actions workflows
-│       ├── terraform-plan-apply.yml # Enhanced plan/apply with approvals
+│       ├── terraform-plan.yml       # Plan-only workflow (runs on PRs)
+│       ├── terraform-apply.yml      # Plan+apply workflow (runs on main pushes)
 │       ├── eks-destroy.yml          # Destroy EKS clusters
 │       └── terraform-validation.yml  # Code validation and security
 ├── terraform/
@@ -47,7 +48,8 @@ A complete, production-ready solution for deploying Amazon EKS clusters using Te
 - **Path-based triggers** on `terraform/aws/overlay/**` changes
 
 ### 🛡️ Approval Gates & Protection
-- **Separate plan/apply jobs** with environment-based approval requirements
+- **Separate plan/apply workflows** for clear separation of concerns
+- **Environment-based approval requirements** for apply operations
 - **Branch protection** requires PR approval and status checks
 - **Environment protection rules**:
   - `dev`: Optional approval (fast iteration)
@@ -55,14 +57,24 @@ A complete, production-ready solution for deploying Amazon EKS clusters using Te
   - `prod`: 2 required approvals + 10-minute cooling period
 
 ### 📋 Workflow Triggers
-- **Pull Requests**: Automatic plan for changed environments
-- **Main branch push**: Plan + Apply (with approvals)
-- **Manual dispatch**: Target specific environments with `plan`, `apply`, or `plan-and-apply`
+
+#### Plan Workflow (`terraform-plan.yml`)
+- **Pull Requests**: Automatic plan for changed environments only
+- **Manual dispatch**: Target specific environments with plan-only
+- **PR Integration**: Plan outputs commented directly on PRs
+- **Status checks**: Required to pass before PR merge
+
+#### Apply Workflow (`terraform-apply.yml`)  
+- **Main branch push**: Automatic plan+apply for changed environments (with approvals)
+- **Manual dispatch**: Target specific environments with plan+apply
+- **Auto cleanup**: Source branch deleted automatically after successful apply
+- **Environment gates**: Enforced approval requirements before apply
 
 ### 💬 PR Integration
 - **Plan output** automatically commented on pull requests
 - **Status checks** prevent merging without successful plans
 - **Change summaries** show which environments will be affected
+- **Updated comments** replace previous plan results for same environment
 
 ## 📚 Repository Configuration
 
@@ -265,6 +277,65 @@ aws eks describe-nodegroup --cluster-name cluster-name --nodegroup-name nodegrou
 # Get cluster endpoint
 aws eks describe-cluster --name cluster-name --query cluster.endpoint --output text
 ```
+
+## 🎮 How to Use
+
+### 🔄 Development Workflow (Main Branch Protected)
+
+Since the main branch is protected, all changes must go through pull requests:
+
+**1. Create Feature Branch**
+```bash
+# Clone the repository (if not already done)
+git clone https://github.com/KPDev0ps/aws-eks.git
+cd aws-eks
+
+# Create and switch to feature branch
+git checkout -b feature/update-dev-config
+
+# Make your changes (e.g., edit terraform/aws/overlay/dev/eks/terraform.tfvars)
+# Edit files as needed...
+
+# Commit and push changes
+git add .
+git commit -m "Update dev cluster configuration"  
+git push origin feature/update-dev-config
+```
+
+**2. Create Pull Request**
+- Go to GitHub and create a PR from your feature branch to `main`
+- The **terraform-plan** workflow automatically runs for changed environments
+- Review plan output in PR comments
+- Get required approvals from team members
+
+**3. Merge and Apply**
+- Once approved, merge the PR to main
+- The **terraform-apply** workflow automatically runs with environment approval gates
+- After successful apply, the source branch is automatically deleted
+
+### 🎯 Manual Workflow Triggers
+
+**Plan-Only (for testing/validation):**
+- Go to Actions → "📋 Terraform Plan"
+- Click "Run workflow"
+- Choose environments: `dev`, `staging`, `prod`, or `all`
+
+**Apply (with plan):**
+- Go to Actions → "🚀 Terraform Apply"  
+- Click "Run workflow"
+- Choose environments and options
+- Requires environment approval gates
+
+### 🚨 Important Notes
+
+- **Main branch is protected** - direct pushes are blocked
+- **Plan workflow** runs automatically on PRs for changed paths
+- **Apply workflow** runs automatically on main branch pushes  
+- **Environment approvals** required for apply operations:
+  - `dev`: Optional approval (fast iteration)
+  - `staging`: 1 required approval
+  - `prod`: 2 required approvals + 10-minute wait
+- **Source branches** are auto-deleted after successful apply
 
 ## 🤝 Contributing
 
