@@ -63,12 +63,12 @@ This makes it easy to identify and track workflow runs in the Actions tab.
 | **Merge to Main** | PR merged with terraform changes | Plan runs first, then Apply waits for approval | ✅ Yes (per environment) |
 
 **PR Events that Trigger Plan:**
-- `opened` - When a new PR is created (non-draft only)
-- `synchronize` - When new commits are pushed to the PR (non-draft only)
-- `reopened` - When a closed PR is reopened (non-draft only)
+- `opened` - When a new **non-draft** PR is created
+- `synchronize` - When new commits are pushed to a **non-draft** PR  
+- `reopened` - When a closed **non-draft** PR is reopened
 - `ready_for_review` - When a draft PR is marked ready for review
 
-**Important:** Plan will NOT run on draft PRs. Mark your PR as "Ready for review" to trigger the plan workflow.
+**Important:** Plan workflow is **completely skipped** for draft PRs. The workflow won't even start. Mark your PR as "Ready for review" to trigger validation and plan.
 
 **Approval Requirements:**
 - **Dev**: Optional (immediate or 1 approval)
@@ -95,15 +95,30 @@ This makes it easy to identify and track workflow runs in the Actions tab.
 │                         AUTOMATED CI/CD FLOW                         │
 └─────────────────────────────────────────────────────────────────────┘
 
-1️⃣ Developer Creates/Updates PR
+1️⃣ Developer Creates/Updates PR (Non-Draft)
    │
-   ├─→ If PR is DRAFT: Workflow skipped ⏭️ (to save resources)
+   ├─→ If PR is DRAFT: Entire workflow skipped ⏭️ (to save resources)
    ├─→ If PR is READY: terraform-plan.yml triggers IMMEDIATELY ✅
-   │   ├─ Detects changed environments
-   │   ├─ Runs terraform plan for each
+   │
+   ├─→ Step 1: Code Quality Validation 🎨
+   │   ├─ Terraform format check
+   │   └─ Must pass to continue ✅
+   │
+   ├─→ Step 2: Environment Validation ✅
+   │   ├─ Validates all environments (dev, staging, prod)
+   │   ├─ Terraform init & validate
+   │   └─ Must pass to continue ✅
+   │
+   ├─→ Step 3: Detect Changes 🔍
+   │   ├─ Detects which environments changed
+   │   └─ Builds matrix for plan
+   │
+   ├─→ Step 4: Terraform Plan 📋
+   │   ├─ Runs plan for changed environments only
    │   └─ Posts results as PR comment
    │
    └─→ PR Review Process
+       ├─ Team reviews validation results
        ├─ Team reviews plan output
        ├─ Code review approval (1 required)
        └─ Merge to main
@@ -270,16 +285,21 @@ This makes it easy to identify and track workflow runs in the Actions tab.
 #### Plan Workflow (`terraform-plan.yml`)
 - **Pull Requests → Main**: 
   - ✅ **Triggers immediately** on PR events: `opened`, `synchronize`, `reopened`, `ready_for_review`
+  - ✅ **Draft PRs completely excluded** - workflow won't start at all for draft PRs
   - ✅ Runs on **any change** to `terraform/**` paths
+  - ✅ **Validation runs first** before plan:
+    - Step 1: Code quality & format check
+    - Step 2: Environment validation (all envs)
+    - Step 3: Change detection
+    - Step 4: Terraform plan (changed envs only)
   - ✅ Automatically detects which environments are affected
-  - ✅ Runs plan for only changed environments (efficient)
   - ✅ Posts plan output as PR comment
-  - ✅ Updates comment on subsequent commits
+  - ✅ Updates comment on subsequent commits (non-draft only)
 - **Manual dispatch**: Target specific environments with plan-only
 - **PR Integration**: Plan outputs commented directly on PRs
 - **Status checks**: Required to pass before PR merge
 - **No approval needed**: Plan is read-only, safe to run automatically
-- **Unique run names**: Shows PR number, title, and triggering user
+- **Unique run names**: Shows run number, event type, and triggering user
 
 #### Apply Workflow (`terraform-apply.yml`)  
 - **Main Branch Push**: 
@@ -776,14 +796,20 @@ See individual environment `variables.tf` files for detailed options.
 
 Check these common issues:
 
-1. **Draft PR**: Plan won't run on draft PRs
-   - Solution: Click "Ready for review" button on the PR to convert from draft
+1. **Draft PR**: Plan workflow is completely skipped for draft PRs
+   - Solution: Click "Ready for review" button to convert from draft
    - This is intentional to prevent unnecessary runs during development
+   - The workflow won't even start for draft PRs
 
-2. **Wrong paths changed**: Workflow only triggers on `terraform/**` paths
+2. **Validation failed**: If code quality or validation fails, plan won't run
+   - Solution: Check workflow logs for validation errors
+   - Fix formatting issues: Run `terraform fmt -recursive`
+   - Fix validation errors in your terraform code
+
+3. **Wrong paths changed**: Workflow only triggers on `terraform/**` paths
    - Solution: Ensure your changes are in terraform directories
 
-3. **Wrong target branch**: Workflow only triggers for PRs to `main` branch
+4. **Wrong target branch**: Workflow only triggers for PRs to `main` branch
    - Solution: Ensure your PR targets the main branch
 
 4. **Branch protection not configured**: May need to manually trigger
