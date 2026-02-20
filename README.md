@@ -2,16 +2,167 @@
 
 [![Terraform Validation](https://github.com/KPDev0ps/aws-eks/actions/workflows/terraform-validation.yml/badge.svg)](https://github.com/KPDev0ps/aws-eks/actions/workflows/terraform-validation.yml)
 
-A complete, production-ready solution for deploying Amazon EKS clusters using Terraform and GitHub Actions. This repository provides a standardized approach to EKS deployment across multiple environments (dev, staging, production) with automated CI/CD pipelines using AWS predefined modules.
+A complete, production-ready solution for deploying Amazon EKS clusters using Terraform and GitHub Actions. This repository provides a standardized approach to EKS deployment across multiple environments (dev, staging, production) with **fully automated CI/CD pipelines** that include approval gates.
+
+## ⚡ Quick Start
+
+### For Developers
+
+```bash
+# 1. Create feature branch
+git checkout -b feature/my-changes
+
+# 2. Make terraform changes
+edit terraform/aws/overlay/dev/eks/terraform.tfvars
+
+# 3. Commit and push
+git add . && git commit -m "Update config" && git push origin feature/my-changes
+
+# 4. Create PR
+# → Plan runs automatically ✅
+# → Review plan output in PR comments
+# → Get PR approval and merge
+
+# 5. After merge to main
+# → Apply workflow starts automatically ✅
+# → Waits for environment approval ⏳
+# → Designated approver approves ✅
+# → Infrastructure updated ✅
+```
+
+### For Approvers
+
+When you receive an approval notification:
+
+1. Go to **Actions** tab → Click the pending workflow run
+2. Click **"Review deployments"** button
+3. Review the environment and changes
+4. Click **"Approve and deploy"** (or Reject)
+5. Apply runs automatically after approval
+
+### Workflow Behavior
+
+| Trigger | When | What Happens | Approval Needed? |
+|---------|------|--------------|------------------|
+| **Create/Update PR** | Any terraform path change | Plan runs immediately, posts results to PR | ❌ No |
+| **Merge to Main** | PR merged with terraform changes | Apply runs automatically, pauses for approval | ✅ Yes (per environment) |
+
+**Approval Requirements:**
+- **Dev**: Optional (immediate or 1 approval)
+- **Staging**: 1 approval required
+- **Prod**: 2 approvals + 10-minute wait
 
 ## 🚀 Features
 
 - **Multi-Environment Support**: Separate configurations for dev, staging, and production
 - **AWS Predefined Modules**: Uses official AWS Terraform modules for reliability and best practices
-- **GitHub Actions Integration**: Automated deployment and validation workflows  
+- **Automated CI/CD Pipeline**: 
+  - ✅ **Automatic Plan on PR** - Runs immediately when PR is created
+  - ✅ **Automatic Apply on Merge** - Triggers when PR merges to main
+  - ✅ **Approval Required** - Environment-based approval gates before apply
+- **Path-Based Triggers**: Workflows run only when terraform files change
 - **Security-First**: OIDC authentication, encrypted storage, security scanning
 - **Cost Optimized**: Environment-specific resource sizing
 - **Production Ready**: High availability, monitoring, and best practices
+
+## 📊 Workflow Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         AUTOMATED CI/CD FLOW                         │
+└─────────────────────────────────────────────────────────────────────┘
+
+1️⃣ Developer Creates PR
+   │
+   ├─→ terraform-plan.yml triggers IMMEDIATELY
+   │   ├─ Detects changed environments
+   │   ├─ Runs terraform plan for each
+   │   └─ Posts results as PR comment
+   │
+   └─→ PR Review Process
+       ├─ Team reviews plan output
+       ├─ Code review approval (1 required)
+       └─ Merge to main
+
+2️⃣ PR Merged to Main  
+   │
+   └─→ terraform-apply.yml triggers AUTOMATICALLY
+       │
+       ├─ Detects changed environments
+       │
+       └─ For each environment:
+           │
+           ├─ [DEV] Approval: Optional/Immediate
+           │   └─→ Apply runs ✅
+           │
+           ├─ [STAGING] Approval: 1 Reviewer Required
+           │   ├─ Workflow PAUSES ⏳
+           │   ├─ Reviewer gets notification
+           │   ├─ Reviewer approves ✅
+           │   └─→ Apply runs ✅
+           │
+           └─ [PROD] Approval: 2 Reviewers + 10min Wait
+               ├─ Workflow PAUSES ⏳
+               ├─ Reviewers get notification
+               ├─ Both approve ✅
+               ├─ Wait 10 minutes ⏱️
+               └─→ Apply runs ✅
+
+3️⃣ Post-Apply Actions
+   │
+   ├─→ Infrastructure updated in AWS
+   ├─→ Summary posted to workflow run
+   └─→ Source branch auto-deleted
+```
+
+### 🔐 How Approvals Work
+
+**What Happens When Apply Needs Approval:**
+
+1. **Workflow Pauses:**
+   - Apply job shows "Waiting for approval" status
+   - Job does not proceed until approved
+   - Timeout after default period (30 days, configurable)
+
+2. **Approvers Notified:**
+   - Designated approvers receive GitHub notification
+   - Email notification sent (if enabled)
+   - Approvers can see pending deployment in Actions tab
+
+3. **Approval Process:**
+   - Approver navigates to: Actions → Workflow Run
+   - Clicks "Review deployments" button
+   - Sees deployment details and environment
+   - Clicks "Approve and deploy" or "Reject"
+   - Optional: Add comment explaining decision
+
+4. **After Approval:**
+   - Workflow resumes automatically
+   - Apply step executes
+   - Infrastructure updated
+   - Approvers notified of completion
+
+5. **After Rejection:**
+   - Workflow fails
+   - No infrastructure changes made
+   - Team notified of rejection
+   - Can re-run workflow manually if needed
+
+**Who Can Approve:**
+- Only designated reviewers for each environment
+- Configured in: Settings → Environments → [env] → Required reviewers
+- Approvers should be experienced with infrastructure changes
+- Recommend: DevOps team, senior developers, platform engineers
+
+**Best Practices:**
+- ✅ Review the plan output before approving
+- ✅ Check the apply won't cause downtime
+- ✅ Verify changes match the PR description
+- ✅ Confirm it's safe to proceed
+- ✅ Add approval comment explaining what was reviewed
+- ❌ Don't approve blindly
+- ❌ Don't approve without reviewing plan
+- ❌ Don't rush production approvals
 
 ## 📁 Repository Structure
 
@@ -45,30 +196,50 @@ A complete, production-ready solution for deploying Amazon EKS clusters using Te
 ### 🔄 Intelligent Change Detection
 - **Automatic detection** of changed Terraform directories
 - **Matrix strategy** runs jobs only for modified environments
-- **Path-based triggers** on `terraform/aws/overlay/**` changes
+- **Path-based triggers** on `terraform/**` changes (any terraform file)
+- **Immediate execution** - plan runs automatically when PR is created or updated
 
 ### 🛡️ Approval Gates & Protection
 - **Separate plan/apply workflows** for clear separation of concerns
-- **Environment-based approval requirements** for apply operations
-- **Branch protection** requires PR approval and status checks
+- **Environment-based approval requirements** for apply operations (enforced by GitHub Environments)
+- **Branch protection** requires PR approval and status checks before merge
+- **Apply requires approval** - after PR merge to main, the apply workflow waits for environment-specific approvals
 - **Environment protection rules**:
-  - `dev`: Optional approval (fast iteration)
-  - `staging`: 1 required approval
-  - `prod`: 2 required approvals + 10-minute cooling period
+  - `dev`: Optional approval (can proceed immediately for fast iteration)
+  - `staging`: 1 required approval before apply
+  - `prod`: 2 required approvals + 10-minute cooling period before apply
 
 ### 📋 Workflow Triggers
 
 #### Plan Workflow (`terraform-plan.yml`)
-- **Pull Requests**: Automatic plan for changed environments only
+- **Pull Requests → Main**: 
+  - ✅ **Triggers immediately** when PR is created or updated
+  - ✅ Runs on **any change** to `terraform/**` paths
+  - ✅ Automatically detects which environments are affected
+  - ✅ Runs plan for only changed environments (efficient)
 - **Manual dispatch**: Target specific environments with plan-only
 - **PR Integration**: Plan outputs commented directly on PRs
 - **Status checks**: Required to pass before PR merge
+- **No approval needed**: Plan is read-only, safe to run automatically
 
 #### Apply Workflow (`terraform-apply.yml`)  
-- **Main branch push**: Automatic plan+apply for changed environments (with approvals)
+- **Main Branch Push**: 
+  - ✅ **Triggers automatically** when PR is merged to main
+  - ✅ Runs on **any change** to `terraform/**` paths
+  - ✅ **Requires approval** based on environment protection rules
+  - ✅ Workflow pauses and waits for required approvers
+  - ✅ Only proceeds after approval is granted
 - **Manual dispatch**: Target specific environments with plan+apply
 - **Auto cleanup**: Source branch deleted automatically after successful apply
 - **Environment gates**: Enforced approval requirements before apply
+- **Approval Process**:
+  1. PR is merged to main
+  2. Apply workflow starts automatically
+  3. Workflow detects changed environments
+  4. For each environment, workflow **pauses** at the apply job
+  5. Designated approvers receive notification
+  6. Apply proceeds only after required approvals granted
+  7. If approvals not granted, workflow times out (configurable)
 
 ### 💬 PR Integration
 - **Plan output** automatically commented on pull requests
@@ -79,7 +250,87 @@ A complete, production-ready solution for deploying Amazon EKS clusters using Te
 ## 📚 Repository Configuration
 
 **Important**: Before using the workflows, you must configure GitHub repository settings for branch protection and environment approvals.
+### 🔐 Required Setup (One-Time Configuration)
 
+#### 1. Create GitHub Environments
+
+The workflows require three environments with protection rules:
+
+**Navigate to:** Repository → Settings → Environments → "New environment"
+
+**Create these environments:**
+
+| Environment | Required Approvals | Wait Timer | Deployment Branches |
+|-------------|-------------------|------------|---------------------|
+| **dev** | 0-1 (optional) | 0 minutes | `main` only |
+| **staging** | 1 | 0 minutes | `main` only |
+| **prod** | 2 | 10 minutes | `main` only |
+
+**Step-by-step:**
+
+1. **Create `dev` Environment:**
+   - Click "New environment" → Name: `dev`
+   - Configure environment:
+     - ☐ Required reviewers: (leave empty or add 1 for awareness)
+     - ☐ Wait timer: 0 minutes
+     - ☑ Deployment branches: Selected branches → Add `main`
+   - Click "Save protection rules"
+
+2. **Create `staging` Environment:**
+   - Click "New environment" → Name: `staging`
+   - Configure environment:
+     - ☑ Required reviewers: Select 1 team member
+     - ☐ Wait timer: 0 minutes
+     - ☑ Deployment branches: Selected branches → Add `main`
+   - Click "Save protection rules"
+
+3. **Create `prod` Environment:**
+   - Click "New environment" → Name: `prod`
+   - Configure environment:
+     - ☑ Required reviewers: Select 2 team members (senior devs/DevOps)
+     - ☑ Wait timer: 10 minutes
+     - ☑ Deployment branches: Selected branches → Add `main`
+     - ☑ Prevent administrators from bypassing: Enable
+   - Click "Save protection rules"
+
+#### 2. Configure Branch Protection
+
+**Navigate to:** Repository → Settings → Branches → "Add rule"
+
+**Branch name pattern:** `main`
+
+**Enable these rules:**
+- ☑ Require a pull request before merging
+  - ☑ Require approvals: 1 minimum
+  - ☑ Dismiss stale PR approvals when new commits are pushed
+- ☑ Require status checks to pass before merging
+  - ☑ Require branches to be up to date before merging
+  - Add required status checks:
+    - `detect-changes`
+    - `terraform-plan (dev)`
+    - `terraform-plan (staging)`
+    - `terraform-plan (prod)`
+- ☑ Require conversation resolution before merging
+- ☑ Do not allow bypassing the above settings
+
+#### 3. Add GitHub Secrets
+
+**Navigate to:** Repository → Settings → Secrets and variables → Actions
+
+**Required secret:**
+- Name: `OIDC_ROLE_ARN`
+- Value: `arn:aws:iam::YOUR_ACCOUNT_ID:role/github-actions-eks-deploy`
+  - (Use the role ARN created in OIDC setup)
+
+### ✅ Verify Configuration
+
+**Test the setup:**
+1. Create a test branch and PR with a small terraform change
+2. Verify plan runs automatically on PR
+3. Merge the PR
+4. Verify apply workflow pauses for approval
+5. Approve the deployment
+6. Verify apply completes successfully
 👉 **See [REPOSITORY_SETUP.md](.github/REPOSITORY_SETUP.md) for detailed setup instructions**
 
 Key requirements:
@@ -110,11 +361,223 @@ cd aws-eks
 ### 2. Configure AWS Authentication
 
 #### Option A: OIDC (Recommended for GitHub Actions)
-Set up OIDC trust relationship between GitHub and AWS:
 
-1. Create an OIDC provider in AWS IAM
-2. Create a role with the necessary permissions
-3. Add the role ARN to GitHub secrets as `OIDC_ROLE_ARN`
+Set up OIDC trust relationship between GitHub and AWS for secure, keyless authentication:
+
+##### Step 1: Create OIDC Identity Provider in AWS
+
+1. **Navigate to IAM Console:**
+   - Go to AWS Console → IAM → Identity providers → Add provider
+
+2. **Configure Provider:**
+   - **Provider type:** OpenID Connect
+   - **Provider URL:** `https://token.actions.githubusercontent.com`
+   - **Audience:** `sts.amazonaws.com`
+   - Click "Get thumbprint" (AWS will auto-fetch)
+   - Click "Add provider"
+
+**Using AWS CLI:**
+```bash
+aws iam create-open-id-connect-provider \
+  --url https://token.actions.githubusercontent.com \
+  --client-id-list sts.amazonaws.com \
+  --thumbprint-list 6938fd4d98bab03faadb97b34396831e3780aea1
+```
+
+##### Step 2: Create IAM Role for GitHub Actions
+
+1. **Create IAM Role:**
+   - Go to IAM → Roles → Create role
+   - Select "Web identity"
+   - **Identity provider:** token.actions.githubusercontent.com
+   - **Audience:** sts.amazonaws.com
+   - Click "Next"
+
+2. **Attach Permissions:**
+   
+   Attach these AWS managed policies:
+   - `AmazonEKSClusterPolicy`
+   - `AmazonEKSWorkerNodePolicy`
+   - `AmazonEC2ContainerRegistryReadOnly`
+   - `AmazonVPCFullAccess` (or create custom policy with least privilege)
+   
+   **Custom Policy for Terraform State (Required):**
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [
+       {
+         "Effect": "Allow",
+         "Action": [
+           "s3:GetObject",
+           "s3:PutObject",
+           "s3:DeleteObject",
+           "s3:ListBucket"
+         ],
+         "Resource": [
+           "arn:aws:s3:::your-terraform-state-bucket",
+           "arn:aws:s3:::your-terraform-state-bucket/*"
+         ]
+       },
+       {
+         "Effect": "Allow",
+         "Action": [
+           "dynamodb:GetItem",
+           "dynamodb:PutItem",
+           "dynamodb:DeleteItem"
+         ],
+         "Resource": "arn:aws:dynamodb:*:*:table/terraform-state-lock"
+       }
+     ]
+   }
+   ```
+
+3. **Name the Role:**
+   - Role name: `github-actions-eks-deploy`
+   - Description: "GitHub Actions role for EKS Terraform deployments"
+   - Click "Create role"
+
+##### Step 3: Configure Trust Policy
+
+**Edit the trust policy** of the created role to restrict access to your repository:
+
+1. Go to the role → Trust relationships → Edit trust policy
+2. Replace with:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::YOUR_AWS_ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+        },
+        "StringLike": {
+          "token.actions.githubusercontent.com:sub": "repo:YOUR_GITHUB_ORG/YOUR_REPO:*"
+        }
+      }
+    }
+  ]
+}
+```
+
+**For stricter security** (only allow from main branch or specific environments):
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::YOUR_AWS_ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+        },
+        "StringLike": {
+          "token.actions.githubusercontent.com:sub": [
+            "repo:YOUR_GITHUB_ORG/YOUR_REPO:ref:refs/heads/main",
+            "repo:YOUR_GITHUB_ORG/YOUR_REPO:pull_request",
+            "repo:YOUR_GITHUB_ORG/YOUR_REPO:environment:dev",
+            "repo:YOUR_GITHUB_ORG/YOUR_REPO:environment:staging",
+            "repo:YOUR_GITHUB_ORG/YOUR_REPO:environment:prod"
+          ]
+        }
+      }
+    }
+  ]
+}
+```
+
+##### Step 4: Add Role ARN to GitHub Secrets
+
+1. Copy the Role ARN from the IAM role summary page
+   - Format: `arn:aws:iam::123456789012:role/github-actions-eks-deploy`
+
+2. In your GitHub repository:
+   - Go to Settings → Secrets and variables → Actions
+   - Click "New repository secret"
+   - Name: `OIDC_ROLE_ARN`
+   - Value: (paste the role ARN)
+   - Click "Add secret"
+
+##### Step 5: Verify OIDC Configuration
+
+**Test the OIDC authentication:**
+
+Create a test workflow or use the existing `terraform-validation.yml`:
+
+```yaml
+- name: 🛡️ Configure AWS Credentials
+  uses: aws-actions/configure-aws-credentials@v4
+  with:
+    role-to-assume: ${{ secrets.OIDC_ROLE_ARN }}
+    aws-region: us-east-2
+    role-duration-seconds: 3600
+
+- name: 🧪 Test AWS Access
+  run: |
+    aws sts get-caller-identity
+    echo "✅ OIDC authentication successful!"
+```
+
+**Using AWS CLI to verify OIDC provider:**
+```bash
+# List OIDC providers
+aws iam list-open-id-connect-providers
+
+# Get OIDC provider details
+aws iam get-open-id-connect-provider \
+  --open-id-connect-provider-arn arn:aws:iam::YOUR_ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com
+```
+
+##### Step 6: Create Terraform State Backend
+
+Before running Terraform, set up the S3 backend:
+
+```bash
+# Create S3 bucket for state
+aws s3 mb s3://your-terraform-state-bucket --region us-east-2
+
+# Enable versioning
+aws s3api put-bucket-versioning \
+  --bucket your-terraform-state-bucket \
+  --versioning-configuration Status=Enabled
+
+# Enable encryption
+aws s3api put-bucket-encryption \
+  --bucket your-terraform-state-bucket \
+  --server-side-encryption-configuration \
+  '{
+    "Rules": [{
+      "ApplyServerSideEncryptionByDefault": {
+        "SSEAlgorithm": "AES256"
+      }
+    }]
+  }'
+
+# Block public access
+aws s3api put-public-access-block \
+  --bucket your-terraform-state-bucket \
+  --public-access-block-configuration \
+  "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
+
+# Create DynamoDB table for state locking
+aws dynamodb create-table \
+  --table-name terraform-state-lock \
+  --attribute-definitions AttributeName=LockID,AttributeType=S \
+  --key-schema AttributeName=LockID,KeyType=HASH \
+  --billing-mode PAY_PER_REQUEST \
+  --region us-east-2
+```
 
 #### Option B: Local Development
 ```bash
@@ -280,40 +743,146 @@ aws eks describe-cluster --name cluster-name --query cluster.endpoint --output t
 
 ## 🎮 How to Use
 
-### 🔄 Development Workflow (Main Branch Protected)
+### 🔄 Standard Development Workflow
 
-Since the main branch is protected, all changes must go through pull requests:
+The repository is configured with a **fully automated CI/CD pipeline** that:
+- ✅ Runs Terraform **plan** immediately when you create a PR
+- ✅ Runs Terraform **apply** automatically when PR is merged to main
+- ✅ **Requires approval** before apply (based on environment)
+- ✅ Ensures infrastructure changes are reviewed and approved
 
-**1. Create Feature Branch**
+#### Step-by-Step Process:
+
+**1. Create Feature Branch & Make Changes**
 ```bash
 # Clone the repository (if not already done)
 git clone https://github.com/KPDev0ps/aws-eks.git
 cd aws-eks
 
 # Create and switch to feature branch
-git checkout -b feature/update-dev-config
+git checkout -b feature/update-dev-cluster
 
-# Make your changes (e.g., edit terraform/aws/overlay/dev/eks/terraform.tfvars)
-# Edit files as needed...
+# Make your changes
+# Example: Edit terraform/aws/overlay/dev/eks/terraform.tfvars
+nano terraform/aws/overlay/dev/eks/terraform.tfvars
 
 # Commit and push changes
 git add .
-git commit -m "Update dev cluster configuration"  
-git push origin feature/update-dev-config
+git commit -m "Update dev cluster node count"  
+git push origin feature/update-dev-cluster
 ```
 
 **2. Create Pull Request**
 - Go to GitHub and create a PR from your feature branch to `main`
-- The **terraform-plan** workflow automatically runs for changed environments
-- Review plan output in PR comments
-- Get required approvals from team members
+- **Automatic actions:**
+  - ✅ `terraform-plan` workflow **runs immediately** (within seconds)
+  - ✅ Plan analyzes which environments are affected
+  - ✅ Plan results posted as PR comment
+  - ✅ Status check added to PR (must pass before merge)
 
-**3. Merge and Apply**
-- Once approved, merge the PR to main
-- The **terraform-apply** workflow automatically runs with environment approval gates
-- After successful apply, the source branch is automatically deleted
+**3. Review Plan Output**
+- Review the plan output in the PR comments
+- Check what resources will be created/modified/destroyed
+- Request code review from team members
+- Get required PR approvals (1 approval minimum for main branch)
 
-### 🎯 Manual Workflow Triggers
+**4. Merge to Main**
+- Once approved and all checks pass, merge the PR
+- GitHub merges the PR to main branch
+- Source feature branch can be deleted
+
+**5. Automatic Apply with Approval Gates** ⭐
+- **Immediately after merge:**
+  - ✅ `terraform-apply` workflow **starts automatically**
+  - ✅ Workflow detects which environments changed
+  - ✅ Workflow **pauses** at the apply step
+  - ✅ **Waits for environment approval** before proceeding
+
+- **Approval Process:**
+  
+  **For Dev Environment:**
+  - Optional approval (can be configured to proceed immediately)
+  - Or requires 1 approval from any team member
+  
+  **For Staging Environment:**
+  - **Required:** 1 approval from designated reviewers
+  - Workflow shows "Waiting for approval" status
+  - Designated approvers receive notification
+  - Approver clicks "Review deployments" → "Approve deployment"
+  - Apply proceeds automatically after approval
+  
+  **For Production Environment:**
+  - **Required:** 2 approvals from designated reviewers
+  - **Required:** 10-minute cooling-off period (minimum wait time)
+  - Both approvals + wait time must be satisfied
+  - Apply proceeds only after all conditions met
+
+- **After Approval:**
+  - ✅ Terraform apply executes
+  - ✅ Infrastructure is updated
+  - ✅ Summary posted to workflow run
+  - ✅ Source branch automatically deleted
+  - ✅ Notification sent (if configured)
+
+**6. Verify Deployment**
+```bash
+# Connect to updated cluster
+aws eks update-kubeconfig --region us-east-2 --name dev-eks-cluster
+
+# Verify nodes
+kubectl get nodes
+
+# Check cluster health
+kubectl get pods --all-namespaces
+```
+
+### 🎯 Example: Updating Dev Environment Node Count
+
+```bash
+# 1. Create branch
+git checkout -b update-dev-nodes
+
+# 2. Edit configuration
+cat >> terraform/aws/overlay/dev/eks/terraform.tfvars << EOF
+# Update min/max node count
+eks_managed_node_groups = {
+  general = {
+    min_size     = 2  # Changed from 1
+    max_size     = 5  # Changed from 3
+    desired_size = 2
+  }
+}
+EOF
+
+# 3. Commit and push
+git add terraform/aws/overlay/dev/eks/terraform.tfvars
+git commit -m "Increase dev cluster min nodes to 2"
+git push origin update-dev-nodes
+
+# 4. Create PR on GitHub
+# - Plan runs automatically ✅
+# - Review plan output in PR comments
+# - Get approval from team
+
+# 5. Merge PR
+# - Apply workflow starts automatically ✅
+# - Waits for environment approval ⏳
+# - Designated approver approves ✅
+# - Infrastructure updated automatically ✅
+```
+
+### 🔄 Development Workflow (Main Branch Protected)
+
+**Important:** Direct pushes to main are blocked. All changes require a pull request.
+
+**Quick Reference:**
+1. **Branch** → Make changes → Commit → Push
+2. **PR Created** → Plan runs automatically ✅
+3. **Review** → Get approvals → Merge
+4. **Merged** → Apply waits for environment approval ⏳
+5. **Approve** → Infrastructure updated ✅
+
+### 🎯 Manual Workflow Triggers (Advanced)
 
 **Plan-Only (for testing/validation):**
 - Go to Actions → "📋 Terraform Plan"
