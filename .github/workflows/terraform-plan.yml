@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - 'terraform/aws/overlay/**'
+      - 'terraform/**'
       - '.github/workflows/**'
       - '.github/actions/**'
   

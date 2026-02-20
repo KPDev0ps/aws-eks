@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'terraform/aws/overlay/**'
+      - 'terraform/**'
       - '.github/workflows/**'
       - '.github/actions/**'
   
@@ -114,6 +114,11 @@ jobs:
     strategy:
       matrix: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
       fail-fast: false
+    # IMPORTANT: Environment protection rules enforce approval requirements
+    # - dev: Optional approval (can be immediate)
+    # - staging: Requires 1 approval before apply
+    # - prod: Requires 2 approvals + 10-minute wait before apply
+    # Configure these in: Repository Settings → Environments
     environment: 
       name: ${{ matrix.environment }}
       url: "https://console.aws.amazon.com/eks/home?region=${{ env.AWS_REGION }}#/clusters"
