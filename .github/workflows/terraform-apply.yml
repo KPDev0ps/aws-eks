@@ -109,7 +109,8 @@ jobs:
     needs: detect-changes
     if: needs.detect-changes.outputs.has_changes == 'true'
     strategy:
-      matrix: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
+      matrix:
+        include: ${{ fromJson(needs.detect-changes.outputs.matrix).include }}
       fail-fast: false
     outputs:
       plan_exitcode: ${{ steps.plan.outputs.exitcode }}
@@ -206,7 +207,8 @@ jobs:
     needs: [detect-changes, terraform-plan]
     if: needs.detect-changes.outputs.has_changes == 'true'
     strategy:
-      matrix: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
+      matrix:
+        include: ${{ fromJson(needs.detect-changes.outputs.matrix).include }}
       fail-fast: false
     # IMPORTANT: Environment protection enforces approval BEFORE apply
     # Approval happens after plan is visible (from terraform-plan job)

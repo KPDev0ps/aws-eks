@@ -93,7 +93,8 @@ jobs:
     needs: detect-changes
     if: always() && needs.detect-changes.result == 'success' && needs.detect-changes.outputs.has_changes == 'true'
     strategy:
-      matrix: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
+      matrix:
+        include: ${{ fromJson(needs.detect-changes.outputs.matrix).include }}
       fail-fast: false
     
     steps:
