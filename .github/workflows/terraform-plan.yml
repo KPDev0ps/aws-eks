@@ -35,68 +35,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  validation-code-quality:
-    name: "🎨 Code Quality & Format"
-    runs-on: ubuntu-latest
-    # Skip validation if PR is in draft state
-    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
-    
-    steps:
-      - name: 📥 Checkout repository
-        uses: actions/checkout@v4
-
-      - name: 🏗️ Set up Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-
-      - name: 🎨 Terraform Format Check
-        id: fmt
-        run: |
-          echo "## 🎨 Terraform Format Check" >> $GITHUB_STEP_SUMMARY
-          
-          if terraform fmt -check -recursive -diff; then
-            echo "✅ All files are properly formatted" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "❌ Files need formatting. Run: \`terraform fmt -recursive\`" >> $GITHUB_STEP_SUMMARY
-            echo "::error::Terraform format check failed. Run 'terraform fmt -recursive' to fix."
-            exit 1
-          fi
-
-  validation-environments:
-    name: "✅ Validate (${{ matrix.environment }})"
-    runs-on: ubuntu-latest
-    needs: validation-code-quality
-    strategy:
-      matrix:
-        environment: [dev, staging, prod]
-      fail-fast: false
-    
-    steps:
-      - name: 📥 Checkout repository
-        uses: actions/checkout@v4
-
-      - name: 🏗️ Set up Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-          
-      - name: 🎯 Terraform Init
-        working-directory: terraform/aws/overlay/${{ matrix.environment }}/eks
-        run: |
-          terraform init -backend=false
-          
-      - name: ✅ Terraform Validate
-        working-directory: terraform/aws/overlay/${{ matrix.environment }}/eks
-        run: |
-          terraform validate
-          echo "✅ ${{ matrix.environment }} validation successful" >> $GITHUB_STEP_SUMMARY
-
   detect-changes:
     name: "🔍 Detect Changes"
     runs-on: ubuntu-latest
-    # Depends on validation passing
-    needs: validation-environments
+    # Skip if PR is in draft state
+    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
     outputs:
       matrix: ${{ steps.get-changes.outputs.matrix }}
       has_changes: ${{ steps.get-changes.outputs.has_changes }}
@@ -323,56 +266,29 @@ jobs:
   plan-summary:
     name: "📊 Plan Summary"
     runs-on: ubuntu-latest
-    needs: [validation-code-quality, validation-environments, detect-changes, terraform-plan]
-    if: always()
+    needs: [detect-changes, terraform-plan]
+    if: always() && needs.detect-changes.outputs.has_changes == 'true'
     
     steps:
       - name: 📊 Generate Summary
         run: |
-          echo "## 📋 Terraform Plan Workflow Summary" >> $GITHUB_STEP_SUMMARY
+          echo "## 📋 Terraform Plan Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          # Validation status
-          validation_quality="${{ needs.validation-code-quality.result }}"
-          validation_envs="${{ needs.validation-environments.result }}"
-          
-          echo "### 🔍 Validation Results:" >> $GITHUB_STEP_SUMMARY
-          if [ "$validation_quality" = "success" ]; then
-            echo "- ✅ Code Quality & Format: Passed" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "- ❌ Code Quality & Format: Failed" >> $GITHUB_STEP_SUMMARY
-          fi
-          
-          if [ "$validation_envs" = "success" ]; then
-            echo "- ✅ Environment Validation: Passed" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "- ❌ Environment Validation: Failed" >> $GITHUB_STEP_SUMMARY
-          fi
-          
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          # Plan status
-          detect_changes="${{ needs.detect-changes.result }}"
           plan_result="${{ needs.terraform-plan.result }}"
-          has_changes="${{ needs.detect-changes.outputs.has_changes }}"
-          
-          if [ "$detect_changes" = "success" ] && [ "$has_changes" = "true" ]; then
-            if [ "$plan_result" = "success" ]; then
-              echo "### ✅ Plan Status: Successful" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "### ❌ Plan Status: Failed" >> $GITHUB_STEP_SUMMARY
-            fi
-            
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### 🎯 Environments Processed:" >> $GITHUB_STEP_SUMMARY
-            
-            environments=$(echo '${{ needs.detect-changes.outputs.environments }}' | jq -r '.[]')
-            for env in $environments; do
-              echo "- \`$env\`" >> $GITHUB_STEP_SUMMARY
-            done
+          if [ "$plan_result" = "success" ]; then
+            echo "### ✅ Plan Status: Successful" >> $GITHUB_STEP_SUMMARY
           else
-            echo "### ⏭️ Plan Status: Skipped (no changes detected)" >> $GITHUB_STEP_SUMMARY
+            echo "### ❌ Plan Status: Failed" >> $GITHUB_STEP_SUMMARY
           fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🎯 Environments Processed:" >> $GITHUB_STEP_SUMMARY
+          
+          environments=$(echo '${{ needs.detect-changes.outputs.environments }}' | jq -r '.[]')
+          for env in $environments; do
+            echo "- \`$env\`" >> $GITHUB_STEP_SUMMARY
+          done
           
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 📋 Next Steps:" >> $GITHUB_STEP_SUMMARY

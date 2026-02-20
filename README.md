@@ -68,7 +68,10 @@ This makes it easy to identify and track workflow runs in the Actions tab.
 - `reopened` - When a closed **non-draft** PR is reopened
 - `ready_for_review` - When a draft PR is marked ready for review
 
-**Important:** Plan workflow is **completely skipped** for draft PRs. The workflow won't even start. Mark your PR as "Ready for review" to trigger validation and plan.
+**Important:** 
+- Plan workflow is **completely skipped** for draft PRs - the workflow won't even start
+- Validation runs separately in `terraform-validation.yml` - both workflows run in parallel
+- Mark your PR as "Ready for review" to trigger both validation and plan workflows
 
 **Approval Requirements:**
 - **Dev**: Optional (immediate or 1 approval)
@@ -98,23 +101,16 @@ This makes it easy to identify and track workflow runs in the Actions tab.
 1️⃣ Developer Creates/Updates PR (Non-Draft)
    │
    ├─→ If PR is DRAFT: Entire workflow skipped ⏭️ (to save resources)
-   ├─→ If PR is READY: terraform-plan.yml triggers IMMEDIATELY ✅
+   ├─→ If PR is READY: Two workflows trigger in parallel ⚡
    │
-   ├─→ Step 1: Code Quality Validation 🎨
-   │   ├─ Terraform format check
-   │   └─ Must pass to continue ✅
+   ├─→ Workflow 1: terraform-validation.yml (separate workflow)
+   │   ├─ Code Quality & Format validation
+   │   ├─ Environment syntax validation
+   │   └─ Security scanning (runs independently)
    │
-   ├─→ Step 2: Environment Validation ✅
-   │   ├─ Validates all environments (dev, staging, prod)
-   │   ├─ Terraform init & validate
-   │   └─ Must pass to continue ✅
-   │
-   ├─→ Step 3: Detect Changes 🔍
+   ├─→ Workflow 2: terraform-plan.yml ✅
    │   ├─ Detects which environments changed
-   │   └─ Builds matrix for plan
-   │
-   ├─→ Step 4: Terraform Plan 📋
-   │   ├─ Runs plan for changed environments only
+   │   ├─ Runs terraform plan for changed envs
    │   └─ Posts results as PR comment
    │
    └─→ PR Review Process
@@ -287,11 +283,11 @@ This makes it easy to identify and track workflow runs in the Actions tab.
   - ✅ **Triggers immediately** on PR events: `opened`, `synchronize`, `reopened`, `ready_for_review`
   - ✅ **Draft PRs completely excluded** - workflow won't start at all for draft PRs
   - ✅ Runs on **any change** to `terraform/**` paths
-  - ✅ **Validation runs first** before plan:
-    - Step 1: Code quality & format check
-    - Step 2: Environment validation (all envs)
-    - Step 3: Change detection
-    - Step 4: Terraform plan (changed envs only)
+  - ✅ **Workflow steps**:
+    - Step 1: Detect changes in terraform directories
+    - Step 2: Terraform plan (changed environments only)
+    - Step 3: Post results to PR comments
+  - ✅ Runs **in parallel** with terraform-validation.yml
   - ✅ Automatically detects which environments are affected
   - ✅ Posts plan output as PR comment
   - ✅ Updates comment on subsequent commits (non-draft only)
@@ -300,6 +296,8 @@ This makes it easy to identify and track workflow runs in the Actions tab.
 - **Status checks**: Required to pass before PR merge
 - **No approval needed**: Plan is read-only, safe to run automatically
 - **Unique run names**: Shows run number, event type, and triggering user
+
+**Note:** Code validation runs separately in `terraform-validation.yml` workflow. Both workflows run in parallel for faster feedback.
 
 #### Apply Workflow (`terraform-apply.yml`)  
 - **Main Branch Push**: 
@@ -801,16 +799,22 @@ Check these common issues:
    - This is intentional to prevent unnecessary runs during development
    - The workflow won't even start for draft PRs
 
-2. **Validation failed**: If code quality or validation fails, plan won't run
-   - Solution: Check workflow logs for validation errors
-   - Fix formatting issues: Run `terraform fmt -recursive`
-   - Fix validation errors in your terraform code
-
-3. **Wrong paths changed**: Workflow only triggers on `terraform/**` paths
+2. **Wrong paths changed**: Workflow only triggers on `terraform/**` paths
    - Solution: Ensure your changes are in terraform directories
+   - Check the `paths:` filter in the workflow file
 
-4. **Wrong target branch**: Workflow only triggers for PRs to `main` branch
+3. **Wrong target branch**: Workflow only triggers for PRs to `main` branch
    - Solution: Ensure your PR targets the main branch
+
+4. **Workflow permissions**: Check repository Actions permissions
+   - Navigate to: Settings → Actions → General
+   - Ensure "Allow all actions" or at least allow actions from GitHub
+
+5. **Check workflow logs**: Go to Actions tab to see if workflow started but failed
+   - Look for error messages in the workflow run
+   - Check if detect-changes job completed successfully
+
+**Note:** The `terraform-validation.yml` workflow runs separately and in parallel. Even if validation fails, the plan workflow will still run. Both workflows provide feedback independently.
 
 4. **Branch protection not configured**: May need to manually trigger
    - Solution: Set up branch protection rules (see Repository Configuration section)
