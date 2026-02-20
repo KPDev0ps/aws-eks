@@ -17,8 +17,10 @@ A complete, production-ready solution for deploying Amazon EKS clusters using Te
 
 ```
 ├── .github/
-│   └── workflows/                    # GitHub Actions workflows
-│       ├── eks-create.yml           # Deploy/update EKS clusters
+│   ├── actions/                     # Custom GitHub Actions
+│   │   └── tf-matrix/              # Terraform change detection action
+│   └── workflows/                   # GitHub Actions workflows
+│       ├── terraform-plan-apply.yml # Enhanced plan/apply with approvals
 │       ├── eks-destroy.yml          # Destroy EKS clusters
 │       └── terraform-validation.yml  # Code validation and security
 ├── terraform/
@@ -33,8 +35,45 @@ A complete, production-ready solution for deploying Amazon EKS clusters using Te
 ├── .gitignore                       # Git ignore rules
 ├── terraform.tfvars.example         # Example configuration
 ├── CONTRIBUTING.md                  # Contribution guidelines
+├── REPOSITORY_SETUP.md              # GitHub repository configuration guide
 └── README.md                        # This file
 ```
+
+## 🎯 Enhanced Workflow Features
+
+### 🔄 Intelligent Change Detection
+- **Automatic detection** of changed Terraform directories
+- **Matrix strategy** runs jobs only for modified environments
+- **Path-based triggers** on `terraform/aws/overlay/**` changes
+
+### 🛡️ Approval Gates & Protection
+- **Separate plan/apply jobs** with environment-based approval requirements
+- **Branch protection** requires PR approval and status checks
+- **Environment protection rules**:
+  - `dev`: Optional approval (fast iteration)
+  - `staging`: 1 required approval
+  - `prod`: 2 required approvals + 10-minute cooling period
+
+### 📋 Workflow Triggers
+- **Pull Requests**: Automatic plan for changed environments
+- **Main branch push**: Plan + Apply (with approvals)
+- **Manual dispatch**: Target specific environments with `plan`, `apply`, or `plan-and-apply`
+
+### 💬 PR Integration
+- **Plan output** automatically commented on pull requests
+- **Status checks** prevent merging without successful plans
+- **Change summaries** show which environments will be affected
+
+## 📚 Repository Configuration
+
+**Important**: Before using the workflows, you must configure GitHub repository settings for branch protection and environment approvals.
+
+👉 **See [REPOSITORY_SETUP.md](.github/REPOSITORY_SETUP.md) for detailed setup instructions**
+
+Key requirements:
+- Environment protection rules (`dev`, `staging`, `prod`)
+- Branch protection for `main` with required status checks
+- GitHub secret `OIDC_ROLE_ARN` configured
 
 ## 🛠️ Prerequisites
 
