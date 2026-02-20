@@ -43,15 +43,17 @@ When you receive an approval notification:
 
 ### Workflow Run Names
 
-Workflows now have descriptive, unique run names:
+Workflows now have descriptive, unique run names for easy identification:
 
 **Plan Workflow:**
-- Format: `📋 Plan: PR #123 - Update dev cluster config [by @username]`
-- Shows: PR number, PR title, who triggered it
+- Format: `📋 Plan #123 - pull_request - @username`
+- Shows: Run number, event type (pull_request/workflow_dispatch), who triggered it
 
 **Apply Workflow:**
-- Format: `🚀 Apply: Merge pull request #123 - SHA: abc1234 [by @username]`
-- Shows: Commit message, commit SHA, who triggered it
+- Format: `🚀 Apply #456 - push - @username`
+- Shows: Run number, event type (push/workflow_dispatch), who triggered it
+
+This makes it easy to identify and track workflow runs in the Actions tab.
 
 ### Workflow Behavior
 
@@ -61,10 +63,12 @@ Workflows now have descriptive, unique run names:
 | **Merge to Main** | PR merged with terraform changes | Plan runs first, then Apply waits for approval | ✅ Yes (per environment) |
 
 **PR Events that Trigger Plan:**
-- `opened` - When a new PR is created
-- `synchronize` - When new commits are pushed to the PR
-- `reopened` - When a closed PR is reopened
-- `ready_for_review` - When a draft PR is marked ready
+- `opened` - When a new PR is created (non-draft only)
+- `synchronize` - When new commits are pushed to the PR (non-draft only)
+- `reopened` - When a closed PR is reopened (non-draft only)
+- `ready_for_review` - When a draft PR is marked ready for review
+
+**Important:** Plan will NOT run on draft PRs. Mark your PR as "Ready for review" to trigger the plan workflow.
 
 **Approval Requirements:**
 - **Dev**: Optional (immediate or 1 approval)
@@ -93,7 +97,8 @@ Workflows now have descriptive, unique run names:
 
 1️⃣ Developer Creates/Updates PR
    │
-   ├─→ terraform-plan.yml triggers IMMEDIATELY ✅
+   ├─→ If PR is DRAFT: Workflow skipped ⏭️ (to save resources)
+   ├─→ If PR is READY: terraform-plan.yml triggers IMMEDIATELY ✅
    │   ├─ Detects changed environments
    │   ├─ Runs terraform plan for each
    │   └─ Posts results as PR comment
@@ -771,8 +776,9 @@ See individual environment `variables.tf` files for detailed options.
 
 Check these common issues:
 
-1. **Draft PR**: Plan won't run until PR is marked "Ready for review"
-   - Solution: Click "Ready for review" button on the PR
+1. **Draft PR**: Plan won't run on draft PRs
+   - Solution: Click "Ready for review" button on the PR to convert from draft
+   - This is intentional to prevent unnecessary runs during development
 
 2. **Wrong paths changed**: Workflow only triggers on `terraform/**` paths
    - Solution: Ensure your changes are in terraform directories
