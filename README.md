@@ -35,17 +35,36 @@ git add . && git commit -m "Update config" && git push origin feature/my-changes
 When you receive an approval notification:
 
 1. Go to **Actions** tab → Click the pending workflow run
-2. Click **"Review deployments"** button
-3. Review the environment and changes
-4. Click **"Approve and deploy"** (or Reject)
-5. Apply runs automatically after approval
+2. **Review the plan output** from the "Plan" job (already completed)
+3. Click **"Review deployments"** button on the "Apply" job
+4. Review the environment and changes
+5. Click **"Approve and deploy"** (or Reject)
+6. Apply runs automatically with the exact plan you reviewed
+
+### Workflow Run Names
+
+Workflows now have descriptive, unique run names:
+
+**Plan Workflow:**
+- Format: `📋 Plan: PR #123 - Update dev cluster config [by @username]`
+- Shows: PR number, PR title, who triggered it
+
+**Apply Workflow:**
+- Format: `🚀 Apply: Merge pull request #123 - SHA: abc1234 [by @username]`
+- Shows: Commit message, commit SHA, who triggered it
 
 ### Workflow Behavior
 
 | Trigger | When | What Happens | Approval Needed? |
 |---------|------|--------------|------------------|
 | **Create/Update PR** | Any terraform path change | Plan runs immediately, posts results to PR | ❌ No |
-| **Merge to Main** | PR merged with terraform changes | Apply runs automatically, pauses for approval | ✅ Yes (per environment) |
+| **Merge to Main** | PR merged with terraform changes | Plan runs first, then Apply waits for approval | ✅ Yes (per environment) |
+
+**PR Events that Trigger Plan:**
+- `opened` - When a new PR is created
+- `synchronize` - When new commits are pushed to the PR
+- `reopened` - When a closed PR is reopened
+- `ready_for_review` - When a draft PR is marked ready
 
 **Approval Requirements:**
 - **Dev**: Optional (immediate or 1 approval)
@@ -72,9 +91,9 @@ When you receive an approval notification:
 │                         AUTOMATED CI/CD FLOW                         │
 └─────────────────────────────────────────────────────────────────────┘
 
-1️⃣ Developer Creates PR
+1️⃣ Developer Creates/Updates PR
    │
-   ├─→ terraform-plan.yml triggers IMMEDIATELY
+   ├─→ terraform-plan.yml triggers IMMEDIATELY ✅
    │   ├─ Detects changed environments
    │   ├─ Runs terraform plan for each
    │   └─ Posts results as PR comment
@@ -86,27 +105,34 @@ When you receive an approval notification:
 
 2️⃣ PR Merged to Main  
    │
-   └─→ terraform-apply.yml triggers AUTOMATICALLY
+   └─→ terraform-apply.yml triggers AUTOMATICALLY ✅
        │
-       ├─ Detects changed environments
+       ├─ Step 1: Plan Job (No Approval Needed)
+       │   ├─ Detects changed environments
+       │   ├─ Runs terraform plan
+       │   ├─ Uploads plan artifact
+       │   └─✅ Completes
        │
-       └─ For each environment:
+       └─ Step 2: Apply Job (Approval Required) ⏳
            │
            ├─ [DEV] Approval: Optional/Immediate
-           │   └─→ Apply runs ✅
+           │   ├─ Downloads plan artifact
+           │   └─→ Terraform apply runs ✅
            │
            ├─ [STAGING] Approval: 1 Reviewer Required
            │   ├─ Workflow PAUSES ⏳
-           │   ├─ Reviewer gets notification
-           │   ├─ Reviewer approves ✅
-           │   └─→ Apply runs ✅
+           │   ├─ Reviewer sees plan from Step 1
+           │   ├─ Reviewer clicks "Approve deployment" ✅
+           │   ├─ Downloads plan artifact
+           │   └─→ Terraform apply runs ✅
            │
            └─ [PROD] Approval: 2 Reviewers + 10min Wait
                ├─ Workflow PAUSES ⏳
-               ├─ Reviewers get notification
-               ├─ Both approve ✅
+               ├─ Reviewers see plan from Step 1
+               ├─ Both reviewers approve ✅
                ├─ Wait 10 minutes ⏱️
-               └─→ Apply runs ✅
+               ├─ Downloads plan artifact
+               └─→ Terraform apply runs ✅
 
 3️⃣ Post-Apply Actions
    │
@@ -117,33 +143,58 @@ When you receive an approval notification:
 
 ### 🔐 How Approvals Work
 
+**Improved Two-Step Process:**
+
+**Step 1: Plan (Automatic, No Approval)**
+- Runs immediately after PR merge
+- Executes terraform plan
+- Shows what will change
+- Uploads plan artifact
+- No approval needed (read-only)
+
+**Step 2: Apply (Requires Approval)**
+- Pauses and waits for approval
+- Approver can review the plan from Step 1
+- After approval, downloads the plan artifact
+- Executes terraform apply with approved plan
+
 **What Happens When Apply Needs Approval:**
 
-1. **Workflow Pauses:**
+1. **Plan Completes First:**
+   - Terraform plan runs and completes
+   - Plan output visible in workflow summary
+   - Plan artifact saved for apply step
+
+2. **Apply Job Pauses:**
    - Apply job shows "Waiting for approval" status
    - Job does not proceed until approved
-   - Timeout after default period (30 days, configurable)
+   - Plan is already visible for review
 
-2. **Approvers Notified:**
+3. **Approvers Notified:**
    - Designated approvers receive GitHub notification
    - Email notification sent (if enabled)
-   - Approvers can see pending deployment in Actions tab
+   - Approvers can see:
+     - Plan output from previous job
+     - Which environment needs approval
+     - Pending deployment in Actions tab
 
-3. **Approval Process:**
+4. **Approval Process:**
    - Approver navigates to: Actions → Workflow Run
+   - Reviews the plan output from Step 1
    - Clicks "Review deployments" button
    - Sees deployment details and environment
    - Clicks "Approve and deploy" or "Reject"
    - Optional: Add comment explaining decision
 
-4. **After Approval:**
+5. **After Approval:**
    - Workflow resumes automatically
-   - Apply step executes
+   - Downloads the approved plan
+   - Apply step executes with the exact plan
    - Infrastructure updated
    - Approvers notified of completion
 
-5. **After Rejection:**
-   - Workflow fails
+6. **After Rejection:**
+   - Workflow fails (apply job cancelled)
    - No infrastructure changes made
    - Team notified of rejection
    - Can re-run workflow manually if needed
@@ -213,33 +264,40 @@ When you receive an approval notification:
 
 #### Plan Workflow (`terraform-plan.yml`)
 - **Pull Requests → Main**: 
-  - ✅ **Triggers immediately** when PR is created or updated
+  - ✅ **Triggers immediately** on PR events: `opened`, `synchronize`, `reopened`, `ready_for_review`
   - ✅ Runs on **any change** to `terraform/**` paths
   - ✅ Automatically detects which environments are affected
   - ✅ Runs plan for only changed environments (efficient)
+  - ✅ Posts plan output as PR comment
+  - ✅ Updates comment on subsequent commits
 - **Manual dispatch**: Target specific environments with plan-only
 - **PR Integration**: Plan outputs commented directly on PRs
 - **Status checks**: Required to pass before PR merge
 - **No approval needed**: Plan is read-only, safe to run automatically
+- **Unique run names**: Shows PR number, title, and triggering user
 
 #### Apply Workflow (`terraform-apply.yml`)  
 - **Main Branch Push**: 
   - ✅ **Triggers automatically** when PR is merged to main
   - ✅ Runs on **any change** to `terraform/**` paths
-  - ✅ **Requires approval** based on environment protection rules
+  - ✅ **Two-phase execution**:
+    - Phase 1: Plan job (no approval, generates plan)
+    - Phase 2: Apply job (requires approval, applies plan)
+  - ✅ **Approval happens between plan and apply**
   - ✅ Workflow pauses and waits for required approvers
   - ✅ Only proceeds after approval is granted
 - **Manual dispatch**: Target specific environments with plan+apply
 - **Auto cleanup**: Source branch deleted automatically after successful apply
 - **Environment gates**: Enforced approval requirements before apply
+- **Unique run names**: Shows commit message, SHA, and triggering user
 - **Approval Process**:
-  1. PR is merged to main
-  2. Apply workflow starts automatically
-  3. Workflow detects changed environments
-  4. For each environment, workflow **pauses** at the apply job
-  5. Designated approvers receive notification
-  6. Apply proceeds only after required approvals granted
-  7. If approvals not granted, workflow times out (configurable)
+  1. PR is merged to main → Apply workflow starts
+  2. Plan job runs (no approval needed)
+  3. Plan output visible in workflow summary
+  4. Apply job waits for approval
+  5. Approver reviews plan and approves
+  6. Apply executes with approved plan
+  7. Infrastructure updated
 
 ### 💬 PR Integration
 - **Plan output** automatically commented on pull requests
@@ -706,6 +764,43 @@ Each environment supports extensive customization through variables:
 See individual environment `variables.tf` files for detailed options.
 
 ## 🔍 Monitoring and Troubleshooting
+
+### Workflow Troubleshooting
+
+**Plan workflow not running on PR?**
+
+Check these common issues:
+
+1. **Draft PR**: Plan won't run until PR is marked "Ready for review"
+   - Solution: Click "Ready for review" button on the PR
+
+2. **Wrong paths changed**: Workflow only triggers on `terraform/**` paths
+   - Solution: Ensure your changes are in terraform directories
+
+3. **Wrong target branch**: Workflow only triggers for PRs to `main` branch
+   - Solution: Ensure your PR targets the main branch
+
+4. **Branch protection not configured**: May need to manually trigger
+   - Solution: Set up branch protection rules (see Repository Configuration section)
+
+5. **Workflow permissions**: Check repository Actions permissions
+   - Navigate to: Settings → Actions → General
+   - Ensure "Allow all actions" or at least allow actions from GitHub
+
+**Apply workflow not waiting for approval?**
+
+1. **Environment not configured**: Check environment protection rules
+   - Navigate to: Settings → Environments → [dev/staging/prod]
+   - Ensure "Required reviewers" is configured
+
+2. **Check job sequence**: Verify apply job comes after plan job
+   - Look for: "Plan" job completes → "Apply" job waits for approval
+
+**Run name not showing correctly?**
+
+- Plan workflow: Should show PR number and title
+- Apply workflow: Should show commit message and SHA
+- If not showing: Check if triggered by supported event (PR, push, manual)
 
 ### Common Issues
 

@@ -1,7 +1,10 @@
 name: "📋 Terraform Plan"
 
+run-name: "📋 Plan: PR #${{ github.event.pull_request.number || 'Manual' }} - ${{ github.event.pull_request.title || github.event.inputs.environments }} [by @${{ github.actor }}]"
+
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     branches: [main]
     paths:
       - 'terraform/**'
