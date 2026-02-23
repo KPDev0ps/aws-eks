@@ -1,6 +1,9 @@
-name: "🚀 EKS Deploy & Manage"
+# DISABLED: This workflow has been replaced by the streamlined terraform workflows
+# Use terraform-validation.yml, terraform-plan.yml, and terraform-apply.yml instead
 
-on:
+# name: "🚀 EKS Deploy & Manage"
+
+# on:
   workflow_dispatch:
     inputs:
       environment:

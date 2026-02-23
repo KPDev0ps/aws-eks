@@ -1,6 +1,9 @@
-name: "💥 EKS Destroy & Cleanup"
+# DISABLED: This workflow has been replaced by the streamlined terraform workflows
+# Use terraform-apply.yml with destroy plan for teardown operations
 
-on:
+# name: "💥 EKS Destroy & Cleanup"
+
+# on:
   workflow_dispatch:
     inputs:
       environment:
