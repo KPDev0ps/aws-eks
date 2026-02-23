@@ -26,26 +26,26 @@ name: "[ARCHIVED] Terraform Plan & Deploy"
 #       - '.github/actions/**'
 #   
 #   workflow_dispatch:
-    inputs:
-      environments:
-        description: 'Environments to target (comma-separated: dev,staging,prod or "all")'
-        required: true
-        default: 'dev'
-        type: string
-      action:
-        description: 'Action to perform'
-        required: true
-        default: 'plan'
-        type: choice
-        options:
-          - plan
-          - apply
-          - plan-and-apply
-      force_all_environments:
-        description: 'Run for all environments regardless of changes'
-        required: false
-        default: false
-        type: boolean
+#     inputs:
+#       environments:
+#         description: 'Environments to target (comma-separated: dev,staging,prod or "all")'
+#         required: true
+#         default: 'dev'
+#         type: string
+#       action:
+#         description: 'Action to perform'
+#         required: true
+#         default: 'plan'
+#         type: choice
+#         options:
+#           - plan
+#           - apply
+#           - plan-and-apply
+#       force_all_environments:
+#         description: 'Run for all environments regardless of changes'
+#         required: false
+#         default: false
+#         type: boolean
 
 permissions:
   id-token: write
