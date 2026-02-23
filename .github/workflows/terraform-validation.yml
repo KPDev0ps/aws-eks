@@ -126,31 +126,6 @@ jobs:
     strategy:
       matrix: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
       fail-fast: false
-
-  validation-summary:
-    name: "📋 Validation Summary"
-    runs-on: ubuntu-latest
-    needs: [detect-changes, validate-environments]
-    if: always()
-    
-    steps:
-      - name: 📊 Validation Results
-        run: |
-          echo "## 🔍 Terraform Validation Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          if [ "${{ needs.detect-changes.outputs.has_changes }}" = "true" ]; then
-            echo "### ✅ Environments Validated:" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            
-            environments=$(echo '${{ needs.detect-changes.outputs.environments }}' | jq -r '.[]')
-            for env in $environments; do
-              echo "- 🎯 **$env** environment validation completed" >> $GITHUB_STEP_SUMMARY
-            done
-          else
-            echo "### ℹ️ No Terraform Changes Detected" >> $GITHUB_STEP_SUMMARY
-            echo "No environments required validation in this workflow run." >> $GITHUB_STEP_SUMMARY
-          fi
     
     steps:
       - name: 📥 Checkout repository
@@ -203,6 +178,31 @@ jobs:
           fi
           
           echo "✅ Configuration lint passed for ${{ matrix.environment }}"
+
+  validation-summary:
+    name: "📋 Validation Summary"
+    runs-on: ubuntu-latest
+    needs: [detect-changes, validate-environments]
+    if: always()
+    
+    steps:
+      - name: 📊 Validation Results
+        run: |
+          echo "## 🔍 Terraform Validation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ needs.detect-changes.outputs.has_changes }}" = "true" ]; then
+            echo "### ✅ Environments Validated:" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            environments=$(echo '${{ needs.detect-changes.outputs.environments }}' | jq -r '.[]')
+            for env in $environments; do
+              echo "- 🎯 **$env** environment validation completed" >> $GITHUB_STEP_SUMMARY
+            done
+          else
+            echo "### ℹ️ No Terraform Changes Detected" >> $GITHUB_STEP_SUMMARY
+            echo "No environments required validation in this workflow run." >> $GITHUB_STEP_SUMMARY
+          fi
 
   security-comprehensive:
     name: "🔐 Comprehensive Security Scan"
