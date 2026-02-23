@@ -62,36 +62,105 @@ jobs:
         run: |
           echo "📋 Manual workflow dispatch detected"
           
+          # Install jq if not available
+          if ! command -v jq &> /dev/null; then
+            sudo apt-get update && sudo apt-get install -y jq
+          fi
+          
           # Parse environments input
           if [ "${{ github.event.inputs.environments }}" = "all" ]; then
             environments='["dev","staging","prod"]'
           else
-            # Convert comma-separated to JSON array
-            envs=$(echo "${{ github.event.inputs.environments }}" | tr ',' '\n' | sed 's/^/"/;s/$/"/' | paste -sd,)
-            environments="[$envs]"
+            # Convert comma-separated to JSON array, handling spaces and empty values
+            input_envs="${{ github.event.inputs.environments }}"
+            
+            # Clean up input: remove spaces, convert to lowercase
+            cleaned_envs=$(echo "$input_envs" | tr ',' '\n' | xargs | tr ' ' '\n' | grep -v '^$' | sort -u)
+            
+            if [ -z "$cleaned_envs" ]; then
+              echo "❌ No valid environments provided"
+              exit 1
+            fi
+            
+            # Build JSON array
+            environments="["
+            first=true
+            for env in $cleaned_envs; do
+              # Validate environment name (only allow alphanumeric and hyphens)
+              if [[ ! "$env" =~ ^[a-zA-Z0-9-]+$ ]]; then
+                echo "❌ Invalid environment name: $env"
+                exit 1
+              fi
+              
+              if [ "$first" = true ]; then
+                first=false
+              else
+                environments="$environments,"
+              fi
+              environments="$environments\"$env\""
+            done
+            environments="$environments]"
           fi
+          
+          echo "📋 Target environments: $environments"
           
           # Build matrix for manual dispatch
           matrix_items=""
+          first_item=true
+          
           for env in $(echo "$environments" | jq -r '.[]'); do
-            if [ ! -z "$matrix_items" ]; then
+            terraform_dir="terraform/aws/overlay/$env/eks"
+            
+            # Verify the directory exists
+            if [ ! -d "$terraform_dir" ]; then
+              echo "❌ Terraform directory does not exist: $terraform_dir"
+              exit 1
+            fi
+            
+            if [ "$first_item" = true ]; then
+              first_item=false
+            else
               matrix_items="$matrix_items,"
             fi
-            matrix_items="$matrix_items{\"environment\":\"$env\",\"terraform_dir\":\"terraform/aws/overlay/$env/eks\"}"
+            
+            matrix_items="$matrix_items{\"environment\":\"$env\",\"terraform_dir\":\"$terraform_dir\"}"
           done
           
           matrix_json="{\"include\":[$matrix_items]}"
+          
+          # Validate JSON
+          echo "$matrix_json" | jq . > /dev/null || {
+            echo "❌ Invalid matrix JSON generated"
+            exit 1
+          }
           
           echo "🎯 Manual dispatch matrix: $matrix_json"
           echo "matrix=$matrix_json" >> $GITHUB_OUTPUT
           echo "has_changes=true" >> $GITHUB_OUTPUT
           echo "environments=$environments" >> $GITHUB_OUTPUT
 
+      - name: 🐛 Debug Outputs
+        run: |
+          echo "## 🐛 Debug Information" >> $GITHUB_STEP_SUMMARY
+          echo "- **Has changes**: ${{ steps.get-changes.outputs.has_changes }}" >> $GITHUB_STEP_SUMMARY  
+          echo "- **Environments**: ${{ steps.get-changes.outputs.environments }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Matrix**: ${{ steps.get-changes.outputs.matrix }}" >> $GITHUB_STEP_SUMMARY
+          echo ""
+          echo "Event name: ${{ github.event_name }}"
+          echo "Has changes: ${{ steps.get-changes.outputs.has_changes }}"
+          echo "Environments: ${{ steps.get-changes.outputs.environments }}"
+          echo "Matrix: ${{ steps.get-changes.outputs.matrix }}"
+
   terraform-plan:
     name: "📋 Plan: ${{ matrix.environment }} environment"
     runs-on: ubuntu-latest
     needs: detect-changes
-    if: always() && needs.detect-changes.result == 'success' && needs.detect-changes.outputs.has_changes == 'true'
+    if: |
+      always() && 
+      needs.detect-changes.result == 'success' && 
+      needs.detect-changes.outputs.has_changes == 'true' &&
+      needs.detect-changes.outputs.matrix != '' &&
+      needs.detect-changes.outputs.matrix != 'null'
     strategy:
       matrix:
         include: ${{ fromJson(needs.detect-changes.outputs.matrix).include }}

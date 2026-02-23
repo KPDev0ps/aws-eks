@@ -23,13 +23,22 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - name: 🔍 Get changed files
+    - name: �️ Install jq
+      shell: bash
+      run: |
+        if ! command -v jq &> /dev/null; then
+          echo "Installing jq..."
+          sudo apt-get update && sudo apt-get install -y jq
+        fi
+
+    - name: �🔍 Get changed files
       id: changed-files
-      uses: tj-actions/changed-files@v41
+      uses: tj-actions/changed-files@v44
       with:
         files: ${{ inputs.filter }}
         dir_names: true
         dir_names_max_depth: 4
+        since_last_remote_commit: true
 
     - name: 🎯 Generate matrix
       id: generate-matrix
@@ -37,8 +46,33 @@ runs:
       run: |
         echo "🔍 Analyzing changed Terraform directories..."
         
+        # Debug: Show all changed files
+        echo "🐛 All changed files: ${{ steps.changed-files.outputs.all_changed_files }}"
+        
         # Get unique environment directories that have changes
-        changed_dirs=$(echo "${{ steps.changed-files.outputs.all_changed_files }}" | tr ' ' '\n' | grep -E "terraform/aws/overlay/[^/]+/eks" | sed 's|terraform/aws/overlay/||' | sed 's|/eks.*||' | sort -u)
+        changed_files="${{ steps.changed-files.outputs.all_changed_files }}"
+        
+        if [ -z "$changed_files" ] || [ "$changed_files" = "" ]; then
+          echo "No changed files detected"
+          echo "has_changes=false" >> $GITHUB_OUTPUT
+          echo "matrix={\"include\":[]}" >> $GITHUB_OUTPUT
+          echo "environments=[]" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+        
+        # Extract environment names from changed directories
+        changed_dirs=""
+        for file in $changed_files; do
+          if [[ "$file" =~ terraform/aws/overlay/([^/]+)/eks ]]; then
+            env="${BASH_REMATCH[1]}"
+            if [ -n "$env" ] && [[ ! "$changed_dirs" =~ (^|[[:space:]])$env($|[[:space:]]) ]]; then
+              changed_dirs="$changed_dirs $env"
+            fi
+          fi
+        done
+        
+        # Trim leading/trailing spaces
+        changed_dirs=$(echo "$changed_dirs" | xargs)
         
         if [ -z "$changed_dirs" ]; then
           echo "No Terraform environment changes detected"
@@ -51,24 +85,60 @@ runs:
         echo "📂 Changed environments detected:"
         echo "$changed_dirs"
         
-        # Build matrix JSON
+        # Build matrix JSON using jq for proper formatting
         matrix_items=""
-        environments_list=""
+        environments_array=""
         
+        first_item=true
         for env in $changed_dirs; do
-          if [ ! -z "$matrix_items" ]; then
-            matrix_items="$matrix_items,"
-            environments_list="$environments_list,"
+          # Validate environment name
+          if [ -z "$env" ]; then
+            continue
           fi
           
-          matrix_items="$matrix_items{\"environment\":\"$env\",\"terraform_dir\":\"terraform/aws/overlay/$env/eks\"}"
-          environments_list="$environments_list\"$env\""
+          # Check if terraform directory exists
+          terraform_dir="terraform/aws/overlay/$env/eks"
+          if [ ! -d "$terraform_dir" ]; then
+            echo "⚠️ Warning: Directory $terraform_dir does not exist, skipping $env"
+            continue
+          fi
           
-          echo "  - $env (terraform/aws/overlay/$env/eks)"
+          if [ "$first_item" = true ]; then
+            first_item=false
+          else
+            matrix_items="$matrix_items,"
+            environments_array="$environments_array,"
+          fi
+          
+          # Properly escape JSON strings
+          matrix_items="$matrix_items{\"environment\":\"$env\",\"terraform_dir\":\"$terraform_dir\"}"
+          environments_array="$environments_array\"$env\""
+          
+          echo "  - $env ($terraform_dir)"
         done
         
+        # Validate we have at least one valid environment
+        if [ "$first_item" = true ]; then
+          echo "No valid Terraform environments found"
+          echo "has_changes=false" >> $GITHUB_OUTPUT
+          echo "matrix={\"include\":[]}" >> $GITHUB_OUTPUT
+          echo "environments=[]" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+        
         matrix_json="{\"include\":[$matrix_items]}"
-        environments_json="[$environments_list]"
+        environments_json="[$environments_array]"
+        
+        # Validate JSON format
+        echo "$matrix_json" | jq . > /dev/null || {
+          echo "❌ Invalid matrix JSON generated: $matrix_json"
+          exit 1
+        }
+        
+        echo "$environments_json" | jq . > /dev/null || {
+          echo "❌ Invalid environments JSON generated: $environments_json"
+          exit 1
+        }
         
         echo "🎯 Generated matrix: $matrix_json"
         echo "📋 Environments list: $environments_json"
