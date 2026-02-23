@@ -1,4 +1,3 @@
-# Development Environment Configuration
 terraform {
   required_version = ">= 1.5.7"
 
