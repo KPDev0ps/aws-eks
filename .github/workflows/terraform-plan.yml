@@ -7,14 +7,6 @@ on:
       - 'terraform/**'
       - '.github/workflows/**'
       - '.github/actions/**'
-  
-  workflow_dispatch:
-    inputs:
-      environments:
-        description: 'Environments to plan (comma-separated: dev,staging,prod or "all")'
-        required: false
-        default: 'all'
-        type: string
 
 permissions:
   id-token: write
@@ -32,59 +24,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Run validation first - plan will only proceed if validation passes
-  code-quality:
-    name: "🎨 Code Quality & Format"
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: 📥 Checkout repository
-        uses: actions/checkout@v4
-
-      - name: 🏗️ Set up Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-
-      - name: 🎨 Terraform Format Check
-        run: |
-          echo "## 🎨 Terraform Format Check" >> $GITHUB_STEP_SUMMARY
-          
-          if terraform fmt -check -recursive -diff; then
-            echo "✅ All files are properly formatted" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "❌ Files need formatting. Run: \`terraform fmt -recursive\`" >> $GITHUB_STEP_SUMMARY
-            exit 1
-          fi
-
-  validate-environments:
-    name: "✅ Environment Validation (${{ matrix.environment }})"
-    runs-on: ubuntu-latest
-    needs: code-quality
-    strategy:
-      matrix:
-        environment: [dev, staging, prod]
-      fail-fast: false
-    
-    steps:
-      - name: 📥 Checkout repository
-        uses: actions/checkout@v4
-
-      - name: 🏗️ Set up Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-          
-      - name: 🎯 Terraform Init
-        working-directory: terraform/aws/overlay/${{ matrix.environment }}/eks
-        run: terraform init -backend=false
-          
-      - name: ✅ Terraform Validate
-        working-directory: terraform/aws/overlay/${{ matrix.environment }}/eks  
-        run: |
-          terraform validate
-          echo "✅ ${{ matrix.environment }} validation successful" >> $GITHUB_STEP_SUMMARY
-
   detect-changes:
     name: "🔍 Detect Changes"
     runs-on: ubuntu-latest
@@ -105,41 +44,12 @@ jobs:
         with:
           filter: terraform/aws/overlay/**
       
-      - name: 🛠️ Handle manual workflow dispatch
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          echo "📋 Manual workflow dispatch detected"
-          
-          # Parse environments input
-          if [ "${{ github.event.inputs.environments }}" = "all" ]; then
-            environments='["dev","staging","prod"]'
-          else
-            # Convert comma-separated to JSON array
-            envs=$(echo "${{ github.event.inputs.environments }}" | tr ',' '\n' | sed 's/^/"/;s/$/"/' | paste -sd,)
-            environments="[$envs]"
-          fi
-          
-          # Build matrix for manual dispatch
-          matrix_items=""
-          for env in $(echo "$environments" | jq -r '.[]'); do
-            if [ ! -z "$matrix_items" ]; then
-              matrix_items="$matrix_items,"
-            fi
-            matrix_items="$matrix_items{\"environment\":\"$env\",\"terraform_dir\":\"terraform/aws/overlay/$env/eks\"}"
-          done
-          
-          matrix_json="{\"include\":[$matrix_items]}"
-          
-          echo "🎯 Manual dispatch matrix: $matrix_json"
-          echo "matrix=$matrix_json" >> $GITHUB_OUTPUT
-          echo "has_changes=true" >> $GITHUB_OUTPUT
-          echo "environments=$environments" >> $GITHUB_OUTPUT
 
-  # Wait for validation to complete successfully before running plan
+
   terraform-plan:
     name: "📋 Plan (${{ matrix.environment }})"
     runs-on: ubuntu-latest
-    needs: [detect-changes, validate-environments]
+    needs: detect-changes
     if: needs.detect-changes.outputs.has_changes == 'true'
     strategy:
       matrix: ${{ fromJson(needs.detect-changes.outputs.matrix) }}

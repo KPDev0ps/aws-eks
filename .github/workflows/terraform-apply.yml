@@ -7,19 +7,6 @@ on:
       - 'terraform/**'
       - '.github/workflows/**'
       - '.github/actions/**'
-  
-  workflow_dispatch:
-    inputs:
-      environments:
-        description: 'Environments to apply (comma-separated: dev,staging,prod or "all")'
-        required: false
-        default: 'all'
-        type: string
-      skip_plan:
-        description: 'Skip plan step (apply existing plan artifacts)'
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   id-token: write
@@ -75,36 +62,6 @@ jobs:
         uses: ./.github/actions/tf-matrix
         with:
           filter: terraform/aws/overlay/**
-      
-      - name: 🛠️ Handle manual workflow dispatch
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          echo "🚀 Manual apply workflow dispatch detected"
-          
-          # Parse environments input
-          if [ "${{ github.event.inputs.environments }}" = "all" ]; then
-            environments='["dev","staging","prod"]'
-          else
-            # Convert comma-separated to JSON array
-            envs=$(echo "${{ github.event.inputs.environments }}" | tr ',' '\n' | sed 's/^/"/;s/$/"/' | paste -sd,)
-            environments="[$envs]"
-          fi
-          
-          # Build matrix for manual dispatch
-          matrix_items=""
-          for env in $(echo "$environments" | jq -r '.[]'); do
-            if [ ! -z "$matrix_items" ]; then
-              matrix_items="$matrix_items,"
-            fi
-            matrix_items="$matrix_items{\"environment\":\"$env\",\"terraform_dir\":\"terraform/aws/overlay/$env/eks\"}"
-          done
-          
-          matrix_json="{\"include\":[$matrix_items]}"
-          
-          echo "🎯 Manual dispatch matrix: $matrix_json"
-          echo "matrix=$matrix_json" >> $GITHUB_OUTPUT
-          echo "has_changes=true" >> $GITHUB_OUTPUT
-          echo "environments=$environments" >> $GITHUB_OUTPUT
 
   terraform-apply:
     name: "🚀 Apply (${{ matrix.environment }})"
