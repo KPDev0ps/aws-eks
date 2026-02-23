@@ -38,7 +38,8 @@ runs:
         echo "🔍 Analyzing changed Terraform directories..."
         
         # Get unique environment directories that have changes
-        changed_dirs=$(echo "${{ steps.changed-files.outputs.all_changed_files }}" | tr ' ' '\n' | grep -E "terraform/aws/overlay/[^/]+/eks" | sed 's|terraform/aws/overlay/||' | sed 's|/eks.*||' | sort -u)
+        # Use grep -E with || true to prevent exit on no matches
+        changed_dirs=$(echo "${{ steps.changed-files.outputs.all_changed_files }}" | tr ' ' '\n' | { grep -E "terraform/aws/overlay/[^/]+/eks" || true; } | sed 's|terraform/aws/overlay/||' | sed 's|/eks.*||' | sort -u | grep -v '^$' || true)
         
         if [ -z "$changed_dirs" ]; then
           echo "No Terraform environment changes detected"
