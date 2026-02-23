@@ -41,9 +41,9 @@ jobs:
     # Skip if PR is in draft state
     if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
     outputs:
-      matrix: ${{ steps.get-changes.outputs.matrix }}
-      has_changes: ${{ steps.get-changes.outputs.has_changes }}
-      environments: ${{ steps.get-changes.outputs.environments }}
+      matrix: ${{ steps.manual-dispatch.outputs.matrix || steps.get-changes.outputs.matrix }}
+      has_changes: ${{ steps.manual-dispatch.outputs.has_changes || steps.get-changes.outputs.has_changes }}
+      environments: ${{ steps.manual-dispatch.outputs.environments || steps.get-changes.outputs.environments }}
     
     steps:
       - name: 📥 Checkout repository
@@ -58,6 +58,7 @@ jobs:
           filter: terraform/aws/overlay/**
       
       - name: 🛠️ Handle manual workflow dispatch
+        id: manual-dispatch
         if: github.event_name == 'workflow_dispatch'
         run: |
           echo "📋 Manual workflow dispatch detected"
@@ -142,25 +143,29 @@ jobs:
       - name: 🐛 Debug Outputs
         run: |
           echo "## 🐛 Debug Information" >> $GITHUB_STEP_SUMMARY
-          echo "- **Has changes**: ${{ steps.get-changes.outputs.has_changes }}" >> $GITHUB_STEP_SUMMARY  
-          echo "- **Environments**: ${{ steps.get-changes.outputs.environments }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Matrix**: ${{ steps.get-changes.outputs.matrix }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Event**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Has changes**: ${{ steps.manual-dispatch.outputs.has_changes || steps.get-changes.outputs.has_changes }}" >> $GITHUB_STEP_SUMMARY  
+          echo "- **Environments**: ${{ steps.manual-dispatch.outputs.environments || steps.get-changes.outputs.environments }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Matrix**: ${{ steps.manual-dispatch.outputs.matrix || steps.get-changes.outputs.matrix }}" >> $GITHUB_STEP_SUMMARY
           echo ""
           echo "Event name: ${{ github.event_name }}"
-          echo "Has changes: ${{ steps.get-changes.outputs.has_changes }}"
-          echo "Environments: ${{ steps.get-changes.outputs.environments }}"
-          echo "Matrix: ${{ steps.get-changes.outputs.matrix }}"
+          echo "Manual dispatch outputs:"
+          echo "  - has_changes: ${{ steps.manual-dispatch.outputs.has_changes }}"
+          echo "  - environments: ${{ steps.manual-dispatch.outputs.environments }}"
+          echo "  - matrix: ${{ steps.manual-dispatch.outputs.matrix }}"
+          echo "Get-changes outputs:"
+          echo "  - has_changes: ${{ steps.get-changes.outputs.has_changes }}"
+          echo "  - environments: ${{ steps.get-changes.outputs.environments }}"
+          echo "  - matrix: ${{ steps.get-changes.outputs.matrix }}"
 
   terraform-plan:
     name: "📋 Plan: ${{ matrix.environment }} environment"
     runs-on: ubuntu-latest
     needs: detect-changes
     if: |
-      always() && 
       needs.detect-changes.result == 'success' && 
-      needs.detect-changes.outputs.has_changes == 'true' &&
-      needs.detect-changes.outputs.matrix != '' &&
-      needs.detect-changes.outputs.matrix != 'null'
+      needs.detect-changes.outputs.has_changes == 'true'
     strategy:
       matrix:
         include: ${{ fromJson(needs.detect-changes.outputs.matrix).include }}
