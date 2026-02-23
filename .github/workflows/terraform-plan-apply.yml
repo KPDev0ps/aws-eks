@@ -7,22 +7,25 @@
 
 name: "[ARCHIVED] Terraform Plan & Deploy"
 
-on:
-  push:
-    branches: [main]
-    paths:
-      - 'terraform/aws/overlay/**'
-      - '.github/workflows/**'
-      - '.github/actions/**'
-  
-  pull_request:
-    branches: [main]
-    paths:
-      - 'terraform/aws/overlay/**'
-      - '.github/workflows/**'
-      - '.github/actions/**'
-  
-  workflow_dispatch:
+# DISABLED: This workflow has been replaced by terraform-plan.yml and terraform-apply.yml
+# All triggers have been commented out to prevent execution
+
+# on:
+#   push:
+#     branches: [main]
+#     paths:
+#       - 'terraform/aws/overlay/**'
+#       - '.github/workflows/**'
+#       - '.github/actions/**'
+#   
+#   pull_request:
+#     branches: [main]
+#     paths:
+#       - 'terraform/aws/overlay/**'
+#       - '.github/workflows/**'
+#       - '.github/actions/**'
+#   
+#   workflow_dispatch:
     inputs:
       environments:
         description: 'Environments to target (comma-separated: dev,staging,prod or "all")'
