@@ -66,6 +66,7 @@ jobs:
   terraform-apply:
     name: "🚀 Apply"
     runs-on: ubuntu-latest
+    environment: apply
     needs: detect-changes
     if: needs.detect-changes.outputs.has_changes == 'true'
     strategy:

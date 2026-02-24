@@ -23,12 +23,14 @@ on:
         type: boolean
 
 permissions:
+  id-token: write
   contents: read
   pull-requests: write
   security-events: write
   issues: write
 
 env:
+  AWS_REGION: eu-west-2
   TF_VERSION: "1.8.0"
 
 jobs:
@@ -177,6 +179,87 @@ jobs:
           fi
 
           echo "✅ Configuration lint passed for ${{ matrix.environment }}"
+
+  terraform-plan:
+    name: "📋 Terraform Plan"
+    runs-on: ubuntu-latest
+    needs: [code-quality, detect-changes, validate-environments]
+    if: needs.detect-changes.outputs.has_changes == 'true'
+    strategy:
+      matrix: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
+      fail-fast: false
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🛡️ Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: "${{ secrets.OIDC_ROLE_ARN }}"
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 3600
+
+      - name: 🏗️ Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: 🎯 Terraform Init
+        working-directory: ${{ matrix.terraform_dir }}
+        run: terraform init
+
+      - name: ✅ Terraform Validate
+        working-directory: ${{ matrix.terraform_dir }}
+        run: terraform validate
+
+      - name: 📋 Terraform Plan
+        id: plan
+        working-directory: ${{ matrix.terraform_dir }}
+        run: |
+          set -o pipefail
+          terraform plan -no-color -input=false | tee plan-output.txt
+
+      - name: 💬 Comment Plan on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const planFilePath = '${{ matrix.terraform_dir }}/plan-output.txt';
+            let planOutput = 'No plan output available';
+
+            try {
+              if (fs.existsSync(planFilePath)) {
+                planOutput = fs.readFileSync(planFilePath, 'utf8');
+              }
+            } catch (error) {
+              console.log('Could not read plan output:', error);
+            }
+
+            const truncatedOutput = planOutput.length > 10000 ?
+              planOutput.substring(0, 10000) + '\n\n... (truncated)' : planOutput;
+
+            const output = `#### Terraform Plan 📖 for \`${{ matrix.environment }}\`
+            - Directory: \`${{ matrix.terraform_dir }}\`
+
+            <details><summary>Show Plan</summary>
+
+            \`\`\`terraform
+            ${truncatedOutput}
+            \`\`\`
+
+            </details>
+
+            *Pusher: @${{ github.actor }}, Action: \`${{ github.event_name }}\`*`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            });
   validation-summary:
     name: "📋 Validation Summary"
     runs-on: ubuntu-latest
