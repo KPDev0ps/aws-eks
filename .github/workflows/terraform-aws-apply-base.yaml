@@ -1,0 +1,266 @@
+---
+name: Terraform AWS Apply Base
+run-name: >-
+  Terraform AWS Apply Base of PR ${{ github.event.pull_request.number }} by @${{ github.actor }}
+
+on:
+  pull_request:
+    types:
+      - closed
+    branches:
+      - main
+    paths:
+      - terraform/aws/base/**
+
+permissions:
+  id-token: write
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  pr-main-merged:
+    if: github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Merged to Main ✅"
+
+  sort-changed-files:
+    needs: pr-main-merged
+    runs-on: gha-runner-scale-set
+    outputs:
+      tf-variables-matrix: ${{ steps.get-tf-changed-dir.outputs.tf-variables }}
+      base-infra-matrix: ${{ steps.get-tf-changed-dir.outputs.base-infra }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get changed TF directories
+        id: get-tf-changed-dir
+        uses: ./.github/actions/tf-matrix
+        with:
+          filter: |
+            terraform/aws/base/**
+
+  get-all-aws-accounts:
+    runs-on: gha-runner-scale-set
+    if: needs.sort-changed-files.outputs.base-infra-matrix != '[]'
+    needs:
+      - pr-main-merged
+      - sort-changed-files
+    outputs:
+      aws-account-name-matrix: ${{ steps.get-all-aws-accounts.outputs.aws_account_names }}
+    env:
+      reference: terraform/aws/base/_env/tf-variables/*.tfvars
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get all AWS Accounts
+        id: get-all-aws-accounts
+        run: |
+          # step: get-all-aws-accounts
+
+          array=($(ls ${{ env.reference }} | xargs -n 1 basename -s .tfvars ))
+          json="$(printf '%s\n' "${array[@]}" | jq -R . |  jq -s -c . )"
+          echo "aws_account_names=$json" | tee -a $GITHUB_OUTPUT
+
+  get-all-base-stacks:
+    runs-on: gha-runner-scale-set
+    if: needs.sort-changed-files.outputs.tf-variables-matrix != '[]'
+    needs:
+      - pr-main-merged
+      - sort-changed-files
+    outputs:
+      tf-all-base-stacks-matrix: ${{ steps.get-all-base-stacks.outputs.tf_all_base_stacks }}
+    env:
+      reference: terraform/aws/base
+      exclude: terraform-state
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get all base stacks
+        id: get-all-base-stacks
+        run: |
+          # step: get-all-base-stacks
+
+          echo "excluding: ${{ env.reference }}/${{ env.exclude }}"
+          array=($(
+            find ${{ env.reference }} \
+              -type d -name ${{ env.exclude }} -prune -o \
+              -type f -name backend.tf -print \
+               | xargs -n1 dirname \
+               | sort -u
+          ))
+          json="$(printf '%s\n' "${array[@]}" | jq -R . | jq -s -c . )"
+          echo "tf_all_base_stacks=$json" | tee -a $GITHUB_OUTPUT
+
+  tf-apply-base-all-accounts:
+    if: >
+      needs.sort-changed-files.outputs.base-infra-matrix != '[]' &&
+      needs.sort-changed-files.outputs.tf-variables-matrix == '[]'
+    needs:
+      - pr-main-merged
+      - sort-changed-files
+      - get-all-aws-accounts
+    runs-on: gha-runner-scale-set
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        tf_stacks: ${{ fromJson(needs.sort-changed-files.outputs.base-infra-matrix) }}
+        aws_account_names: ${{ fromJson(needs.get-all-aws-accounts.outputs.aws-account-name-matrix) }}
+    env:
+      tf_stack: ${{ matrix.tf_stacks }}
+      aws_account_name: ${{ matrix.aws_account_names }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get Environment
+        id: get-env
+        uses: ./.github/actions/get-env-aws
+        with:
+          aws_account_name: ${{ env.aws_account_name }}
+
+      - name: configure aws credentials
+        uses: aws-actions/configure-aws-credentials@v4.0.2
+        with:
+          role-to-assume: arn:aws:iam::${{ steps.get-env.outputs.aws_account_id }}:role/FutureSecureAI-Admin-GitHub-actions-runner
+          aws-region: ap-southeast-2
+
+      - name: terraform plan
+        id: terraform-plan
+        uses: ./.github/actions/tf-command
+        with:
+          cloud_account: ${{ env.aws_account_name }}
+          gh_token: ${{ secrets.GITHUB_TOKEN }}
+          tf_layer: base
+          tf_stack: ${{ env.tf_stack }}
+          tf_command: plan
+
+      - name: terraform apply
+        id: terraform-apply
+        uses: ./.github/actions/tf-command
+        with:
+          cloud_account: ${{ env.aws_account_name }}
+          gh_token: ${{ secrets.GITHUB_TOKEN }}
+          tf_layer: base
+          tf_stack: ${{ env.tf_stack }}
+          tf_command: apply
+
+  tf-apply-base-all-stacks:
+    if: >
+      needs.sort-changed-files.outputs.tf-variables-matrix != '[]' &&
+      needs.sort-changed-files.outputs.base-infra-matrix == '[]'
+    needs:
+      - pr-main-merged
+      - sort-changed-files
+      - get-all-base-stacks
+    runs-on: gha-runner-scale-set
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        tf_all_base_stacks: ${{ fromJson(needs.get-all-base-stacks.outputs.tf-all-base-stacks-matrix) }}
+        tf_variables: ${{ fromJson(needs.sort-changed-files.outputs.tf-variables-matrix) }}
+    env:
+      tf_stack: ${{ matrix.tf_all_base_stacks }}
+      tf_variables: ${{ matrix.tf_variables }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse Enviroment
+        id: parse-env
+        run: |
+          aws_account_name=$( basename $(echo ${{ env.tf_variables }} | cut -d'/' -f6) .tfvars )
+          echo "aws_account_name=$aws_account_name" | tee -a $GITHUB_OUTPUT
+
+      - name: Get Environment
+        id: get-env
+        uses: ./.github/actions/get-env-aws
+        with:
+          aws_account_name: ${{ steps.parse-env.outputs.aws_account_name }}
+
+      - name: configure aws credentials
+        uses: aws-actions/configure-aws-credentials@v4.0.2
+        with:
+          role-to-assume: arn:aws:iam::${{ steps.get-env.outputs.aws_account_id }}:role/FutureSecureAI-Admin-GitHub-actions-runner
+          aws-region: ap-southeast-2
+
+      - name: terraform plan
+        id: terraform-plan
+        uses: ./.github/actions/tf-command
+        with:
+          cloud_account: ${{ steps.parse-env.outputs.aws_account_name }}
+          gh_token: ${{ secrets.GITHUB_TOKEN }}
+          tf_layer: base
+          tf_stack: ${{ env.tf_stack }}
+          tf_command: plan
+
+      - name: terraform apply
+        id: terraform-apply
+        uses: ./.github/actions/tf-command
+        with:
+          cloud_account: ${{ steps.parse-env.outputs.aws_account_name }}
+          gh_token: ${{ secrets.GITHUB_TOKEN }}
+          tf_layer: base
+          tf_stack: ${{ env.tf_stack }}
+          tf_command: apply
+
+  tf-apply-base-everything:
+    if: >
+      needs.sort-changed-files.outputs.tf-variables-matrix != '[]' &&
+      needs.sort-changed-files.outputs.base-infra-matrix != '[]'
+    needs:
+      - pr-main-merged
+      - sort-changed-files
+      - get-all-base-stacks
+      - get-all-aws-accounts
+    runs-on: gha-runner-scale-set
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        tf_all_base_stacks: ${{ fromJson(needs.get-all-base-stacks.outputs.tf-all-base-stacks-matrix) }}
+        aws_account_names: ${{ fromJson(needs.get-all-aws-accounts.outputs.aws-account-name-matrix) }}
+    env:
+      tf_stack: ${{ matrix.tf_all_base_stacks }}
+      aws_account_name: ${{ matrix.aws_account_names }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get Environment
+        id: get-env
+        uses: ./.github/actions/get-env-aws
+        with:
+          aws_account_name: ${{ env.aws_account_name }}
+
+      - name: configure aws credentials
+        uses: aws-actions/configure-aws-credentials@v4.0.2
+        with:
+          role-to-assume: arn:aws:iam::${{ steps.get-env.outputs.aws_account_id }}:role/FutureSecureAI-Admin-GitHub-actions-runner
+          aws-region: ap-southeast-2
+
+      - name: terraform plan
+        id: terraform-plan
+        uses: ./.github/actions/tf-command
+        with:
+          cloud_account: ${{ env.aws_account_name }}
+          gh_token: ${{ secrets.GITHUB_TOKEN }}
+          tf_layer: base
+          tf_stack: ${{ env.tf_stack }}
+          tf_command: plan
+
+      - name: terraform apply
+        id: terraform-apply
+        uses: ./.github/actions/tf-command
+        with:
+          cloud_account: ${{ env.aws_account_name }}
+          gh_token: ${{ secrets.GITHUB_TOKEN }}
+          tf_layer: base
+          tf_stack: ${{ env.tf_stack }}
+          tf_command: apply

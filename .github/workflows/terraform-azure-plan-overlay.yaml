@@ -1,0 +1,144 @@
+---
+name: Terraform Azure Plan Overlay
+run-name: >-
+  Terraform Azure Plan Overlay of PR ${{ github.event.pull_request.number }} by @${{ github.actor }}
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - converted_to_draft
+      - ready_for_review
+    branches: [main]
+    paths:
+      - terraform/azure/overlay/**
+
+permissions:
+  id-token: write
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  sort-changed-files:
+    runs-on: gha-runner-scale-set
+    outputs:
+      minor-infra-matrix: ${{ steps.get-tf-changed-dir.outputs.minor-infra }}
+      major-infra-matrix: ${{ steps.get-tf-changed-dir.outputs.major-infra }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get changed TF directories
+        id: get-tf-changed-dir
+        uses: ./.github/actions/tf-matrix
+        with:
+          filter: |
+            terraform/azure/overlay/**
+
+  tf-plan-minor-infra:
+    if: needs.sort-changed-files.outputs.minor-infra-matrix != '[]'
+    needs: sort-changed-files
+    runs-on: gha-runner-scale-set
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        tf_stacks: ${{ fromJson(needs.sort-changed-files.outputs.minor-infra-matrix) }}
+    env:
+      tf_stack: ${{ matrix.tf_stacks }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse Environment
+        id: parse-env
+        run: |
+          azure_subscription=$( echo ${{ env.tf_stack }} | cut -d'/' -f4 )
+          echo "azure_subscription=$azure_subscription" | tee -a $GITHUB_OUTPUT
+
+      - name: Get Environment
+        id: get-env
+        uses: ./.github/actions/get-env-azure
+        with:
+          azure_subscription: ${{ steps.parse-env.outputs.azure_subscription }}
+
+      - name: Install Azure CLI
+        run: |
+          curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ steps.get-env.outputs.azure_client_id }}
+          tenant-id: ${{ steps.get-env.outputs.azure_tenant_id }}
+          subscription-id: ${{ steps.get-env.outputs.azure_subscription_id }}
+
+      - name: terraform plan
+        id: terraform-plan
+        uses: ./.github/actions/tf-command
+        env:
+          ARM_USE_OIDC: true
+          ARM_CLIENT_ID: ${{ steps.get-env.outputs.azure_client_id }}
+          ARM_TENANT_ID: ${{ steps.get-env.outputs.azure_tenant_id }}
+          ARM_SUBSCRIPTION_ID: ${{ steps.get-env.outputs.azure_subscription_id }}
+        with:
+          cloud_account: ${{ steps.parse-env.outputs.azure_subscription }}
+          gh_token: ${{ secrets.GITHUB_TOKEN }}
+          tf_layer: overlay
+          tf_stack: ${{ env.tf_stack }}
+          tf_command: plan
+
+  tf-plan-major-infra:
+    if: needs.sort-changed-files.outputs.major-infra-matrix != '[]'
+    needs: sort-changed-files
+    runs-on: gha-runner-scale-set
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        tf_stacks: ${{ fromJson(needs.sort-changed-files.outputs.major-infra-matrix) }}
+    env:
+      tf_stack: ${{ matrix.tf_stacks }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse Environment
+        id: parse-env
+        run: |
+          azure_subscription=$( echo ${{ env.tf_stack }} | cut -d'/' -f4 )
+          echo "azure_subscription=$azure_subscription" | tee -a $GITHUB_OUTPUT
+
+      - name: Get Environment
+        id: get-env
+        uses: ./.github/actions/get-env-azure
+        with:
+          azure_subscription: ${{ steps.parse-env.outputs.azure_subscription }}
+
+      - name: Install Azure CLI
+        run: |
+          curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ steps.get-env.outputs.azure_client_id }}
+          tenant-id: ${{ steps.get-env.outputs.azure_tenant_id }}
+          subscription-id: ${{ steps.get-env.outputs.azure_subscription_id }}
+
+      - name: terraform plan
+        id: terraform-plan
+        uses: ./.github/actions/tf-command
+        env:
+          ARM_USE_OIDC: true
+          ARM_CLIENT_ID: ${{ steps.get-env.outputs.azure_client_id }}
+          ARM_TENANT_ID: ${{ steps.get-env.outputs.azure_tenant_id }}
+          ARM_SUBSCRIPTION_ID: ${{ steps.get-env.outputs.azure_subscription_id }}
+        with:
+          cloud_account: ${{ steps.parse-env.outputs.azure_subscription }}
+          gh_token: ${{ secrets.GITHUB_TOKEN }}
+          tf_layer: overlay
+          tf_stack: ${{ env.tf_stack }}
+          tf_command: plan

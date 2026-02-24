@@ -1,0 +1,107 @@
+name: Terraform AWS Manual
+run-name: >-
+  ${{ inputs.aws_account_name }}-${{ inputs.tf_layer }}: terraform ${{ inputs.tf_command }} @ ${{ inputs.tf_stack }}
+
+on:
+  workflow_dispatch:
+   inputs:
+      aws_account_name:
+        description: >-
+          aws_account (Required):
+          AWS account name on which
+          terraform state file is
+          located
+        type: choice
+        required: true
+        default: dev
+        options:
+          - dev
+          - testing
+          - production
+          - network
+          - shared-services
+          - audit
+          - future-secure-ai
+          - log-archive
+          - nam-dev
+          - nam-sit
+          - nam-prod
+          - us-dev
+
+      tf_layer:
+        description: >-
+          layer (Required):
+          terraform layer
+        type: choice
+        required: true
+        default: overlay
+        options:
+          - base
+          - overlay
+
+      tf_stack:
+        description: >-
+          tf_stack (Required):
+          Targeted Directory which tf-command will be executed.
+          For base -- The path starts after the tf_layer.
+          For overlay -- The path starts after aws_account_name.
+        type: string
+        required: true
+
+      tf_command:
+        description: >-
+          tf_command (Required):
+          terraform command to execute
+        type: choice
+        required: true
+        default: plan
+        options:
+          - plan
+          - apply
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  terraform:
+    name: "${{ inputs.aws_account_name }}-${{ inputs.tf_layer }}-terraform"
+    runs-on: gha-runner-scale-set
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get Environment
+        id: get-env
+        uses: ./.github/actions/get-env-aws
+        with:
+          aws_account_name: ${{ inputs.aws_account_name }}
+
+      - name: configure aws credentials
+        uses: aws-actions/configure-aws-credentials@v4.0.2
+        with:
+          role-to-assume: arn:aws:iam::${{ steps.get-env.outputs.aws_account_id }}:role/FutureSecureAI-Admin-GitHub-actions-runner
+          aws-region: ap-southeast-2
+
+      - name: Terraform AWS Base ${{ inputs.tf_command }}
+        if: inputs.tf_layer == 'base'
+        uses: ./.github/actions/tf-command
+        with:
+          cloud_account: ${{ inputs.aws_account_name }}
+          gh_token: ${{ secrets.GITHUB_TOKEN }}
+          tf_layer: base
+          tf_stack: terraform/aws/base/${{ inputs.tf_stack }}
+          tf_command: ${{ inputs.tf_command }}
+
+
+      - name: Terraform AWS Overlay ${{ inputs.tf_command }}
+        if: inputs.tf_layer == 'overlay'
+        uses: ./.github/actions/tf-command
+        with:
+          cloud_account: ${{ inputs.aws_account_name }}
+          gh_token: ${{ secrets.GITHUB_TOKEN }}
+          tf_layer: overlay
+          tf_stack: terraform/aws/overlay/${{ inputs.aws_account_name }}/${{ inputs.tf_stack }}
+          tf_command: ${{ inputs.tf_command }}

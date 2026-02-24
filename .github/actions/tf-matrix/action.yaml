@@ -1,0 +1,109 @@
+---
+name: 'Get Terraform Changed Files'
+author: <devops@futuresecure.ai>
+description: 'Get the Terraform Changed Files'
+branding:
+  icon: 'life-buoy'
+  color: 'purple'
+
+inputs:
+  filter:
+    description: 'Files Filter'
+    default: "*"
+
+outputs:
+  tf-backends:
+    description: TF Backends changed from base
+    value: ${{ steps.sort-files.outputs.tf_backends_json }}
+  tf-variables:
+    description: TF Variables changed from base
+    value: ${{ steps.sort-files.outputs.tf_variables_json }}
+  base-infra:
+    description: TF Stacks changed from base_infra
+    value: ${{ steps.sort-dir.outputs.base_infra }}
+  minor-infra:
+    description: TF Stacks changed from overlay minor_infra
+    value: ${{ steps.sort-dir.outputs.minor_infra }}
+  major-infra:
+    description: TF Stacks changed from overlay major_infra
+    value: ${{ steps.sort-dir.outputs.major_infra }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Get changed files
+      id: changed-files
+      uses: tj-actions/changed-files@v45
+      with:
+        path: .
+        files: |
+          ${{ inputs.filter }}
+
+    - name: Sort changed files
+      id: sort-files
+      env:
+        changed_files: ${{ steps.changed-files.outputs.all_changed_and_modified_files }}
+      shell: bash
+      run: |
+        # step: sort-files
+
+        tf_backends=(); tf_variables=(); tf_stacks=()
+
+        for path in $changed_files; do
+          if [[ "$path" == *"base/_env"* ]]; then
+            case "$path" in
+              *tf-backend/*.hcl)
+                tf_backends+=("$path")
+                ;;
+              *tf-variables/*.tfvars)
+                tf_variables+=("$path")
+                ;;
+            esac
+          else
+            tf_stacks+=("$path")
+          fi
+        done
+
+        tf_backends_json=$(printf '%s\n' "${tf_backends[@]}" | jq -R . | jq -s -c 'map(select(length > 0))')
+        tf_variables_json=$(printf '%s\n' "${tf_variables[@]}" | jq -R . | jq -s -c 'map(select(length > 0))')
+        tf_stacks_dir=$(printf '%s\n' "${tf_stacks[@]}" | xargs -r -n1 dirname | sort -u | paste -sd ' ' -)
+
+        echo "tf_backends_json=$tf_backends_json" | tee -a $GITHUB_OUTPUT
+        echo "tf_variables_json=$tf_variables_json" | tee -a $GITHUB_OUTPUT
+        echo "tf_stacks_dir=$tf_stacks_dir" | tee -a $GITHUB_OUTPUT
+
+    - name: Setup Python
+      id: setup-python
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.13
+
+    - name: Install Python dependencies
+      shell: bash
+      run: pip install pyyaml
+
+    # BUG: cannot find backend.tf when whole directory is removed in git
+    # this probably needs to do git diff on commit to see the deleted dir
+    # and put it on a separate array dedicated for deleted stack
+    - name: Sort changed dir by environment
+      id: sort-dir
+      env:
+        CHANGED_DIR: ${{ steps.sort-files.outputs.tf_stacks_dir }}
+        SCRIPT_PY: .github/actions/tf-matrix/script.py
+        LOG_LEVEL: INFO
+      shell: bash
+      run: |
+        # step: sort changed dir by env
+
+        python3 $SCRIPT_PY
+
+    - name: Validate tf-matrix outputs
+      shell: bash
+      run:  |
+        # step: validate tf-matrix outputs
+
+        echo "tf-backends: ${{ steps.sort-files.outputs.tf_backends_json }}"
+        echo "tf-variables: ${{ steps.sort-files.outputs.tf_variables_json }}"
+        echo "base-infra: ${{ steps.sort-dir.outputs.base_infra }}"
+        echo "minor-infra: ${{ steps.sort-dir.outputs.minor_infra }}"
+        echo "major-infra: ${{ steps.sort-dir.outputs.major_infra }}"

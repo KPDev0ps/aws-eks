@@ -1,0 +1,26 @@
+infra_types:
+  minor_infra:
+    # AWS
+    - dev
+    - testing
+    - sandbox
+    - nam-sit
+    - nam-dev
+    - us-dev
+    - sandbox-uat
+
+    # AZURE
+    - fsai-azure-us-internal-dev
+
+  major_infra:
+    # AWS
+    - audit
+    - future-secure-ai
+    - production
+    - log-archive
+    - network
+    - shared-services
+    - nam-prod
+    - core-network
+
+    # AZURE

@@ -1,0 +1,111 @@
+name: Terraform Azure Manual
+run-name: >-
+  ${{ inputs.azure_subscription }}-${{ inputs.tf_layer }}: terraform ${{ inputs.tf_command }} @ ${{ inputs.tf_stack }}
+
+on:
+  workflow_dispatch:
+   inputs:
+      azure_subscription:
+        description: >-
+          azure_subscription (Required):
+          Azure subscription name on which
+          terraform state file is
+          located
+        type: choice
+        required: true
+        default: fsai-azure-us-internal-dev
+        options:
+          - fsai-azure-us-internal-dev
+
+      tf_layer:
+        description: >-
+          layer (Required):
+          terraform layer
+        type: choice
+        required: true
+        default: overlay
+        options:
+          - base
+          - overlay
+
+      tf_stack:
+        description: >-
+          tf_stack (Required):
+          Targeted Directory which tf-command will be executed.
+          For base -- The path starts after the tf_layer.
+          For overlay -- The path starts after azure_subscription.
+        type: string
+        required: true
+
+      tf_command:
+        description: >-
+          tf_command (Required):
+          terraform command to execute
+        type: choice
+        required: true
+        default: plan
+        options:
+          - plan
+          - apply
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  terraform:
+    name: "${{ inputs.azure_subscription }}-${{ inputs.tf_layer }}-terraform"
+    runs-on: gha-runner-scale-set
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get Environment
+        id: get-env
+        uses: ./.github/actions/get-env-azure
+        with:
+          azure_subscription: ${{ inputs.azure_subscription }}
+
+      - name: Install Azure CLI
+        run: |
+          curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ steps.get-env.outputs.azure_client_id }}
+          tenant-id: ${{ steps.get-env.outputs.azure_tenant_id }}
+          subscription-id: ${{ steps.get-env.outputs.azure_subscription_id }}
+
+      - name: Terraform Azure Base ${{ inputs.tf_command }}
+        if: inputs.tf_layer == 'base'
+        uses: ./.github/actions/tf-command
+        env:
+          ARM_USE_OIDC: true
+          ARM_CLIENT_ID: ${{ steps.get-env.outputs.azure_client_id }}
+          ARM_TENANT_ID: ${{ steps.get-env.outputs.azure_tenant_id }}
+          ARM_SUBSCRIPTION_ID: ${{ steps.get-env.outputs.azure_subscription_id }}
+        with:
+          cloud_account: ${{ inputs.azure_subscription }}
+          gh_token: ${{ secrets.GITHUB_TOKEN }}
+          tf_layer: base
+          tf_stack: terraform/azure/base/${{ inputs.tf_stack }}
+          tf_command: ${{ inputs.tf_command }}
+
+
+      - name: Terraform Azure Overlay ${{ inputs.tf_command }}
+        if: inputs.tf_layer == 'overlay'
+        uses: ./.github/actions/tf-command
+        env:
+          ARM_USE_OIDC: true
+          ARM_CLIENT_ID: ${{ steps.get-env.outputs.azure_client_id }}
+          ARM_TENANT_ID: ${{ steps.get-env.outputs.azure_tenant_id }}
+          ARM_SUBSCRIPTION_ID: ${{ steps.get-env.outputs.azure_subscription_id }}
+        with:
+          cloud_account: ${{ inputs.azure_subscription }}
+          gh_token: ${{ secrets.GITHUB_TOKEN }}
+          tf_layer: overlay
+          tf_stack: terraform/azure/overlay/${{ inputs.azure_subscription }}/${{ inputs.tf_stack }}
+          tf_command: ${{ inputs.tf_command }}

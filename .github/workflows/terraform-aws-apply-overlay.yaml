@@ -1,0 +1,223 @@
+---
+name: Terraform AWS Apply Overlay
+run-name: >-
+  Terraform AWS Apply Overlay of PR ${{ github.event.pull_request.number }} by @${{ github.actor }}
+
+on:
+  pull_request:
+    types:
+      - closed
+    branches:
+      - main
+    paths:
+      - terraform/aws/overlay/**
+
+permissions:
+  id-token: write
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  pr-main-merged:
+    if: github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Merged to Main ✅"
+
+  sort-changed-files:
+    needs: pr-main-merged
+    runs-on: gha-runner-scale-set
+    outputs:
+      minor-infra-matrix: ${{ steps.get-tf-changed-dir.outputs.minor-infra }}
+      major-infra-matrix: ${{ steps.get-tf-changed-dir.outputs.major-infra }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get changed TF directories
+        id: get-tf-changed-dir
+        uses: ./.github/actions/tf-matrix
+        with:
+          filter: |
+            terraform/aws/overlay/**
+
+  tf-plan-minor-infra:
+    if: needs.sort-changed-files.outputs.minor-infra-matrix != '[]'
+    needs:
+      - pr-main-merged
+      - sort-changed-files
+    runs-on: gha-runner-scale-set
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        tf_stacks: ${{ fromJson(needs.sort-changed-files.outputs.minor-infra-matrix) }}
+    env:
+      tf_stack: ${{ matrix.tf_stacks }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse Enviroment
+        id: parse-env
+        run: |
+          aws_account_name=$( echo ${{ env.tf_stack }} | cut -d'/' -f4 )
+          echo "aws_account_name=$aws_account_name" | tee -a $GITHUB_OUTPUT
+
+      - name: Get Environment
+        id: get-env
+        uses: ./.github/actions/get-env-aws
+        with:
+          aws_account_name: ${{ steps.parse-env.outputs.aws_account_name }}
+
+      - name: configure aws credentials
+        uses: aws-actions/configure-aws-credentials@v4.0.2
+        with:
+          role-to-assume: arn:aws:iam::${{ steps.get-env.outputs.aws_account_id }}:role/FutureSecureAI-Admin-GitHub-actions-runner
+          aws-region: ap-southeast-2
+
+      - name: terraform plan
+        id: terraform-plan
+        uses: ./.github/actions/tf-command
+        with:
+          cloud_account: ${{ steps.parse-env.outputs.aws_account_name }}
+          gh_token: ${{ secrets.GITHUB_TOKEN }}
+          tf_layer: overlay
+          tf_stack: ${{ env.tf_stack }}
+          tf_command: plan
+
+  tf-apply-minor-infra:
+    if: needs.sort-changed-files.outputs.minor-infra-matrix != '[]'
+    needs:
+      - pr-main-merged
+      - sort-changed-files
+      - tf-plan-minor-infra
+    runs-on: gha-runner-scale-set
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        tf_stacks: ${{ fromJson(needs.sort-changed-files.outputs.minor-infra-matrix) }}
+    env:
+      tf_stack: ${{ matrix.tf_stacks }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse Enviroment
+        id: parse-env
+        run: |
+          aws_account_name=$( echo ${{ env.tf_stack }} | cut -d'/' -f4 )
+          echo "aws_account_name=$aws_account_name" | tee -a $GITHUB_OUTPUT
+
+      - name: Get Environment
+        id: get-env
+        uses: ./.github/actions/get-env-aws
+        with:
+          aws_account_name: ${{ steps.parse-env.outputs.aws_account_name }}
+
+      - name: configure aws credentials
+        uses: aws-actions/configure-aws-credentials@v4.0.2
+        with:
+          role-to-assume: arn:aws:iam::${{ steps.get-env.outputs.aws_account_id }}:role/FutureSecureAI-Admin-GitHub-actions-runner
+          aws-region: ap-southeast-2
+
+      - name: terraform apply
+        id: terraform-apply
+        uses: ./.github/actions/tf-command
+        with:
+          cloud_account: ${{ steps.parse-env.outputs.aws_account_name }}
+          gh_token: ${{ secrets.GITHUB_TOKEN }}
+          tf_layer: overlay
+          tf_stack: ${{ env.tf_stack }}
+          tf_command: apply
+
+  tf-plan-major-infra:
+    if: needs.sort-changed-files.outputs.major-infra-matrix != '[]'
+    needs:
+      - pr-main-merged
+      - sort-changed-files
+    runs-on: gha-runner-scale-set
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        tf_stacks: ${{ fromJson(needs.sort-changed-files.outputs.major-infra-matrix) }}
+    env:
+      tf_stack: ${{ matrix.tf_stacks }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse Enviroment
+        id: parse-env
+        run: |
+          aws_account_name=$( echo ${{ env.tf_stack }} | cut -d'/' -f4 )
+          echo "aws_account_name=$aws_account_name" | tee -a $GITHUB_OUTPUT
+
+      - name: Get Environment
+        id: get-env
+        uses: ./.github/actions/get-env-aws
+        with:
+          aws_account_name: ${{ steps.parse-env.outputs.aws_account_name }}
+
+      - name: configure aws credentials
+        uses: aws-actions/configure-aws-credentials@v4.0.2
+        with:
+          role-to-assume: arn:aws:iam::${{ steps.get-env.outputs.aws_account_id }}:role/FutureSecureAI-Admin-GitHub-actions-runner
+          aws-region: ap-southeast-2
+
+      - name: terraform plan
+        id: terraform-plan
+        uses: ./.github/actions/tf-command
+        with:
+          cloud_account: ${{ steps.parse-env.outputs.aws_account_name }}
+          gh_token: ${{ secrets.GITHUB_TOKEN }}
+          tf_layer: overlay
+          tf_stack: ${{ env.tf_stack }}
+          tf_command: plan
+
+  tf-apply-major-infra:
+    if: needs.sort-changed-files.outputs.major-infra-matrix != '[]'
+    environment: protected
+    needs:
+      - pr-main-merged
+      - sort-changed-files
+      - tf-plan-major-infra
+    runs-on: gha-runner-scale-set
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        tf_stacks: ${{ fromJson(needs.sort-changed-files.outputs.major-infra-matrix) }}
+    env:
+      tf_stack: ${{ matrix.tf_stacks }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse Enviroment
+        id: parse-env
+        run: |
+          aws_account_name=$( echo ${{ env.tf_stack }} | cut -d'/' -f4 )
+          echo "aws_account_name=$aws_account_name" | tee -a $GITHUB_OUTPUT
+
+      - name: Get Environment
+        id: get-env
+        uses: ./.github/actions/get-env-aws
+        with:
+          aws_account_name: ${{ steps.parse-env.outputs.aws_account_name }}
+
+      - name: configure aws credentials
+        uses: aws-actions/configure-aws-credentials@v4.0.2
+        with:
+          role-to-assume: arn:aws:iam::${{ steps.get-env.outputs.aws_account_id }}:role/FutureSecureAI-Admin-GitHub-actions-runner
+          aws-region: ap-southeast-2
+
+      - name: terraform apply
+        id: terraform-apply
+        uses: ./.github/actions/tf-command
+        with:
+          cloud_account: ${{ steps.parse-env.outputs.aws_account_name }}
+          gh_token: ${{ secrets.GITHUB_TOKEN }}
+          tf_layer: overlay
+          tf_stack: ${{ env.tf_stack }}
+          tf_command: apply
