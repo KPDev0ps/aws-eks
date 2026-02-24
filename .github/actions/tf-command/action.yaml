@@ -1,0 +1,179 @@
+---
+name: 'Terraform Command'
+author: <devops@futuresecure.ai>
+description: 'Terraform Command to execute'
+branding:
+  icon: 'life-buoy'
+  color: 'purple'
+
+inputs:
+  cloud_account:
+    description: >-
+      name of the cloud account on which
+      terraform state file is located.
+      cloud account could be AWS Account,
+      Azure Subscription or GCP Project
+    required: true
+
+  tf_layer:
+    description: >-
+      terraform layer
+    required: true
+
+  tf_stack:
+    description: >-
+      Targeted Directory which
+      tf-command will be executed.
+      The path starts after the tf_layer
+    required: true
+
+  tf_command:
+    description: >-
+      terraform command to execute
+    required: true
+
+  gh_token:
+    description: >-
+      Github Token for posting in GH
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: 1.9
+
+    - uses: actions/setup-node@v4 # not needed when runs-on: ubuntu-latest
+      with:
+        node-version: 18
+
+    - name: Set up tfcmt
+      uses: shmokmt/actions-setup-tfcmt@v2
+
+    - name: Cloud Provider
+      id: get-cloud-provider
+      shell: bash
+      run: |
+        # get cloud provider
+
+        cloud_provider=$(echo ${{ inputs.tf_stack }} | awk -F'/' '{print $2}')
+        echo "cloud_provider=$cloud_provider" | tee -a $GITHUB_OUTPUT
+
+    - name: Terraform ${{ steps.get-cloud-provider.outputs.cloud_provider }} Base ${{ inputs.tf_command }}
+      if: inputs.tf_layer == 'base'
+      env:
+        GITHUB_TOKEN: ${{ inputs.gh_token }}
+        TF_BACKEND: terraform/${{ steps.get-cloud-provider.outputs.cloud_provider }}/base/_env/tf-backend/${{ inputs.cloud_account }}.hcl
+        TF_VARFILE: terraform/${{ steps.get-cloud-provider.outputs.cloud_provider }}/base/_env/tf-variables/${{ inputs.cloud_account }}.tfvars
+        TARGET_DIR: ${{ inputs.tf_stack }}
+        TARGET_TFCMT: ${{ inputs.tf_stack }}-${{ inputs.cloud_account }}
+      shell: bash
+      run: |
+        # steps: terraform-${{ inputs.tf_command }}
+
+        terraform -chdir=${{ env.TARGET_DIR }} init \
+          -backend-config=${{ github.workspace }}/${{ env.TF_BACKEND }}
+
+        case "${{ inputs.tf_command }}" in
+          plan)
+            if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+              tfcmt --var target:${{ env.TARGET_TFCMT }} plan --patch --disable-label -- \
+              terraform -chdir=${{ env.TARGET_DIR }} plan \
+                -var-file=${{ github.workspace }}/${{ env.TF_VARFILE }} \
+                -no-color \
+                -compact-warnings
+            fi
+
+            tfcmt --var target:${{ env.TARGET_TFCMT }}  --output plan.md plan --disable-label -- \
+            terraform -chdir=${{ env.TARGET_DIR }} plan \
+              -var-file=${{ github.workspace }}/${{ env.TF_VARFILE }} \
+              -no-color \
+              -compact-warnings
+            ;;
+          apply)
+            tfcmt --var target:${{ env.TARGET_TFCMT }}  --output apply.md apply -- \
+            terraform -chdir=${{ env.TARGET_DIR }} apply \
+              -var-file=${{ github.workspace }}/${{ env.TF_VARFILE }} \
+              -no-color \
+              -compact-warnings \
+              -auto-approve
+            ;;
+          esac
+
+    - name: Terraform ${{ steps.get-cloud-provider.outputs.cloud_provider }} Overlay ${{ inputs.tf_command }}
+      if: inputs.tf_layer == 'overlay'
+      env:
+        GITHUB_TOKEN: ${{ inputs.gh_token }}
+        TARGET_DIR: ${{ inputs.tf_stack }}
+      shell: bash
+      run: |
+        # steps: terraform-${{ inputs.tf_command }}
+
+        terraform -chdir=${{ env.TARGET_DIR }} init
+
+        case "${{ inputs.tf_command }}" in
+          plan)
+            if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+              tfcmt --var target:${{ env.TARGET_DIR }} plan --patch --disable-label -- \
+              terraform -chdir=${{ env.TARGET_DIR }} plan \
+                -no-color \
+                -compact-warnings
+            fi
+
+            tfcmt --var target:${{ env.TARGET_DIR }} --output plan.md plan --disable-label -- \
+            terraform -chdir=${{ env.TARGET_DIR }} plan \
+              -no-color \
+              -compact-warnings
+            ;;
+          apply)
+            tfcmt --var target:${{ env.TARGET_DIR }} --output apply.md apply -- \
+            terraform -chdir=${{ env.TARGET_DIR }} apply \
+              -no-color \
+              -compact-warnings \
+              -auto-approve
+            ;;
+          esac
+
+    - name: Post Github Summary
+      shell: bash
+      run: |
+        if [ -f "${{ github.workspace }}/${{ inputs.tf_command }}.md" ]; then
+          cat "${{ github.workspace }}/${{ inputs.tf_command }}.md" >> "$GITHUB_STEP_SUMMARY"
+        else
+          echo "No ${{ inputs.tf_command }}.md file found to add to summary"
+        fi
+
+    - name: rename summary markdown
+      id: rename-summary-md
+      shell: bash
+      run: |
+        # step: rename-summary-md (as upload-artifact might overwrite the file on next call)
+
+        prefix=$(echo ${{ inputs.tf_stack }} | tr -s '/' '_')
+
+        case "${{ inputs.tf_layer }}" in
+          base)
+            artifact="${prefix}-${{ inputs.tf_command }}-${{ inputs.cloud_account }}.md"
+            ;;
+          overlay)
+            artifact="${prefix}-${{ inputs.tf_command }}.md"
+            ;;
+        esac
+
+        if [ -f "${{ github.workspace }}/${{ inputs.tf_command }}.md" ]; then
+          cp "${{ github.workspace }}/${{ inputs.tf_command }}.md" "$GITHUB_WORKSPACE/$artifact"
+          echo "artifact=$artifact" | tee -a $GITHUB_ENV
+        else
+          echo "❌ No ${{ inputs.tf_command }}.md file found to rename"
+          echo "artifact=" | tee -a $GITHUB_ENV
+        fi
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        path: ${{ env.artifact }}
+        name: ${{ env.artifact }}
+        overwrite: false
+        retention-days: 2

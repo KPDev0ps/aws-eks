@@ -1,11 +1,11 @@
-# Development Environment Configuration
 terraform {
   required_version = ">= 1.5.7"
 
   backend "s3" {
-    bucket  = "terraf0rmstate1"
-    key     = "eks/dev/terraform.tfstate"
-    region  = "eu-west-2"
+    bucket = "terraf0rmstate1"
+    key    = "eks/dev/terraform.tfstate"
+    region = "eu-west-2"
+    # Backend settings should match the shared state bucket.
     encrypt = true
   }
 
@@ -193,3 +193,4 @@ module "eks" {
 
   tags = local.common_tags
 }
+

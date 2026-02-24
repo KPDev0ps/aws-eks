@@ -1,0 +1,77 @@
+---
+name: 'Get Environment'
+author: <devops@futuresecure.ai>
+description: 'Get the Environment for the workflow'
+branding:
+  icon: 'life-buoy'
+  color: 'purple'
+
+inputs:
+  aws_account_name:
+    description: aws account name
+    required: true
+
+outputs:
+  aws_account_id:
+    description: AWS Account Number of the Environment
+    value: ${{ steps.get-env-terraform.outputs.aws_account_id }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Get Terraform Environment
+      id: get-env-terraform
+      shell: bash
+      run: |
+        # step: get-env-terraform
+
+        case ${{ inputs.aws_account_name }} in
+          audit)
+            aws_account_id="575108937278"
+            ;;
+          future-secure-ai)
+            aws_account_id="980921748212"
+            ;;
+          sandbox)
+            aws_account_id="783764599679"
+            ;;
+          dev)
+            aws_account_id="682033481043"
+            ;;
+          testing)
+            aws_account_id="050752608492"
+            ;;
+          production)
+            aws_account_id="340752804518"
+            ;;
+          log-archive)
+            aws_account_id="825765388558"
+            ;;
+          network)
+            aws_account_id="650251700893"
+            ;;
+          shared-services)
+            aws_account_id="273354621727"
+            ;;
+          core-network)
+            aws_account_id="589535615578"
+            ;;
+          nam-prod)
+            aws_account_id="942165496123"
+            ;;
+          nam-sit)
+            aws_account_id="996960859408"
+            ;;
+          nam-dev)
+            aws_account_id="409431482481"
+            ;;
+          us-dev)
+            aws_account_id="705522375480"
+            ;;
+          sandbox-uat)
+            aws_account_id="783764599679"
+            ;;
+
+          esac
+
+          echo "aws_account_id=$aws_account_id" | tee -a $GITHUB_OUTPUT

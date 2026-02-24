@@ -199,6 +199,11 @@ When you receive an approval notification:
 - **Path-based triggers** on `terraform/**` changes (any terraform file)
 - **Immediate execution** - plan runs automatically when PR is created or updated
 
+## 📝 Note
+
+The .github workflows and actions in this repository are synced from the
+cloud-platforms-main source to keep CI behavior consistent.
+
 ### 🛡️ Approval Gates & Protection
 - **Separate plan/apply workflows** for clear separation of concerns
 - **Environment-based approval requirements** for apply operations (enforced by GitHub Environments)
