@@ -29,7 +29,7 @@ runs:
       with:
         files: ${{ inputs.filter }}
         dir_names: true
-        dir_names_max_depth: 4
+        dir_names_max_depth: 5
 
     - name: 🎯 Generate matrix
       id: generate-matrix
@@ -39,7 +39,7 @@ runs:
         
         # Get unique environment directories that have changes
         # Use grep -E with || true to prevent exit on no matches
-        changed_dirs=$(echo "${{ steps.changed-files.outputs.all_changed_files }}" | tr ' ' '\n' | { grep -E "terraform/aws/overlay/[^/]+/eks" || true; } | sed 's|terraform/aws/overlay/||' | sed 's|/eks.*||' | sort -u | grep -v '^$' || true)
+        changed_dirs=$(echo "${{ steps.changed-files.outputs.all_changed_files }}" | tr ' ' '\n' | { grep -E "terraform/aws/overlay/[^/]+(/eks)?" || true; } | sed 's|terraform/aws/overlay/||' | sed 's|/eks.*||' | sort -u | grep -v '^$' || true)
         
         if [ -z "$changed_dirs" ]; then
           echo "No Terraform environment changes detected"

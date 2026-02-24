@@ -5,6 +5,7 @@ terraform {
     bucket  = "terraf0rmstate1"
     key     = "eks/dev/terraform.tfstate"
     region  = "eu-west-2"
+    # Backend settings should match the shared state bucket.
     encrypt = true
   }
 
