@@ -24,7 +24,24 @@ permissions:
   issues: write
   pull-requests: write
 
+env:
+  AWS_REGION: eu-west-2
+  TF_VERSION: "1.8.0"
+
 jobs:
+  code-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive -diff
+
   detect-changed-dirs:
     runs-on: ubuntu-latest
     outputs:
@@ -41,9 +58,9 @@ jobs:
         with:
           filter: terraform/aws/overlay/**
 
-  terraform-plan:
+  validate-environments:
     if: needs.detect-changed-dirs.outputs.has_changes == 'true'
-    needs: detect-changed-dirs
+    needs: [code-quality, detect-changed-dirs]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -55,7 +72,38 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: latest
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init (no backend)
+        working-directory: ${{ matrix.terraform_dir }}
+        run: terraform init -backend=false
+
+      - name: Terraform Validate
+        working-directory: ${{ matrix.terraform_dir }}
+        run: terraform validate
+
+  terraform-plan:
+    if: needs.detect-changed-dirs.outputs.has_changes == 'true'
+    needs: [detect-changed-dirs, validate-environments]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix: ${{ fromJson(needs.detect-changed-dirs.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: "${{ secrets.OIDC_ROLE_ARN }}"
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 3600
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
 
       - name: Terraform Init
         working-directory: ${{ matrix.terraform_dir }}
@@ -68,7 +116,9 @@ jobs:
       - name: Terraform Plan
         id: plan
         working-directory: ${{ matrix.terraform_dir }}
-        run: terraform plan -no-color
+        run: |
+          set -o pipefail
+          terraform plan -no-color -input=false | tee plan-output.txt
         continue-on-error: true
 
       - name: Comment PR
@@ -77,6 +127,21 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
+            const fs = require('fs');
+            const planFilePath = '${{ matrix.terraform_dir }}/plan-output.txt';
+            let planOutput = 'No plan output available';
+            
+            try {
+              if (fs.existsSync(planFilePath)) {
+                planOutput = fs.readFileSync(planFilePath, 'utf8');
+              }
+            } catch (error) {
+              console.log('Could not read plan output:', error);
+            }
+            
+            const truncatedOutput = planOutput.length > 10000 ?
+              planOutput.substring(0, 10000) + '\n\n... (truncated)' : planOutput;
+            
             const output = `#### Terraform Plan 📖 for \`${{ matrix.environment }}\`
             - Environment: \`${{ matrix.environment }}\`
             - Directory: \`${{ matrix.terraform_dir }}\`
@@ -84,7 +149,7 @@ jobs:
             <details><summary>Show Plan</summary>
             
             \`\`\`terraform
-            ${{ steps.plan.outputs.stdout }}
+            ${truncatedOutput}
             \`\`\`
             
             </details>
