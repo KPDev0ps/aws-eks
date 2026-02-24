@@ -1,261 +1,96 @@
-name: "📋 Terraform Plan"
+---
+name: Terraform AWS Plan Overlay
+run-name: >-
+  Terraform AWS Plan Overlay of PR ${{ github.event.pull_request.number }} by @${{ github.actor }}
 
 on:
   pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - converted_to_draft
+      - ready_for_review
     branches: [main]
     paths:
-      - 'terraform/**'
-      - '.github/workflows/**'
-      - '.github/actions/**'
+      - terraform/aws/overlay/**
 
 permissions:
   id-token: write
   contents: read
-  pull-requests: write
   issues: write
-  checks: write
-
-env:
-  AWS_REGION: us-east-2
-  TF_VERSION: "1.8.0"
-
-concurrency:
-  group: terraform-plan-${{ github.ref }}
-  cancel-in-progress: true
+  pull-requests: write
 
 jobs:
-  detect-changes:
-    name: "🔍 Detect Changes"
+  detect-changed-dirs:
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.get-changes.outputs.matrix }}
-      has_changes: ${{ steps.get-changes.outputs.has_changes }}
-      environments: ${{ steps.get-changes.outputs.environments }}
-    
+      matrix: ${{ steps.get-tf-changed-dir.outputs.matrix }}
+      has_changes: ${{ steps.get-tf-changed-dir.outputs.has_changes }}
     steps:
-      - name: 📥 Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      
-      - name: 🎯 Get changed Terraform directories
-        id: get-changes
+
+      - name: Get changed TF directories
+        id: get-tf-changed-dir
         uses: ./.github/actions/tf-matrix
         with:
           filter: terraform/aws/overlay/**
-      
-
 
   terraform-plan:
-    name: "📋 Plan (${{ matrix.environment }})"
+    if: needs.detect-changed-dirs.outputs.has_changes == 'true'
+    needs: detect-changed-dirs
     runs-on: ubuntu-latest
-    needs: detect-changes
-    if: needs.detect-changes.outputs.has_changes == 'true'
     strategy:
-      matrix: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
       fail-fast: false
-    
+      max-parallel: 3
+      matrix: ${{ fromJson(needs.detect-changed-dirs.outputs.matrix) }}
     steps:
-      - name: 📥 Checkout repository
-        uses: actions/checkout@v4
-      
-      - name: 🛡️ Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: "${{ secrets.OIDC_ROLE_ARN }}"
-          aws-region: ${{ env.AWS_REGION }}
-          role-duration-seconds: 3600
-      
-      - name: 🏗️ Setup Terraform
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: ${{ env.TF_VERSION }}
-          terraform_wrapper: false
-      
-      - name: 📋 Cache Terraform
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.terraform.d/plugin-cache
-          key: ${{ runner.os }}-terraform-${{ matrix.environment }}-${{ hashFiles(format('{0}/.terraform.lock.hcl', matrix.terraform_dir)) }}
-          restore-keys: |
-            ${{ runner.os }}-terraform-${{ matrix.environment }}-
-      
-      - name: 🔧 Terraform Init
+          terraform_version: latest
+
+      - name: Terraform Init
         working-directory: ${{ matrix.terraform_dir }}
-        run: |
-          echo "🔧 Initializing Terraform for ${{ matrix.environment }}..."
-          terraform init
-          
-      - name: 🎨 Terraform Format Check
+        run: terraform init
+
+      - name: Terraform Validate
         working-directory: ${{ matrix.terraform_dir }}
-        run: |
-          echo "🎨 Checking Terraform format for ${{ matrix.environment }}..."
-          if ! terraform fmt -check -diff; then
-            echo "❌ Format check failed for ${{ matrix.environment }}"
-            echo "💡 Run: terraform fmt -recursive"
-            exit 1
-          fi
-          
-      - name: ✅ Terraform Validate
-        working-directory: ${{ matrix.terraform_dir }}
-        run: |
-          echo "✅ Validating Terraform configuration for ${{ matrix.environment }}..."
-          terraform validate
-          
-      - name: 📋 Terraform Plan
+        run: terraform validate
+
+      - name: Terraform Plan
         id: plan
         working-directory: ${{ matrix.terraform_dir }}
+        run: terraform plan -no-color
         continue-on-error: true
-        run: |
-          echo "📋 Creating Terraform plan for ${{ matrix.environment }}..."
-          
-          terraform plan \
-            -detailed-exitcode \
-            -out=tfplan-${{ matrix.environment }}-${{ github.run_number }}.tfplan \
-            -input=false
-          
-          exit_code=$?
-          echo "exitcode=$exit_code" >> $GITHUB_OUTPUT
-          
-          # Generate human readable plan
-          terraform show -no-color tfplan-${{ matrix.environment }}-${{ github.run_number }}.tfplan > plan-output.txt
-          
-          if [ $exit_code -eq 1 ]; then
-            echo "❌ Plan failed for ${{ matrix.environment }}"
-            exit 1
-          elif [ $exit_code -eq 2 ]; then
-            echo "📋 Plan shows changes for ${{ matrix.environment }}"
-          else
-            echo "✅ No changes needed for ${{ matrix.environment }}"
-          fi
-      
-      - name: 📤 Upload Plan Artifact
-        if: steps.plan.outputs.exitcode == '2'
-        uses: actions/upload-artifact@v4
-        with:
-          name: terraform-plan-${{ matrix.environment }}-${{ github.run_number }}
-          path: |
-            ${{ matrix.terraform_dir }}/tfplan-${{ matrix.environment }}-${{ github.run_number }}.tfplan
-            ${{ matrix.terraform_dir }}/plan-output.txt
-          retention-days: 30
-      
-      - name: 💬 Comment Plan on PR
-        if: github.event_name == 'pull_request'
+
+      - name: Comment PR
         uses: actions/github-script@v7
+        if: github.event_name == 'pull_request'
         with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const fs = require('fs');
-            const path = require('path');
+            const output = `#### Terraform Plan 📖 for \`${{ matrix.environment }}\`
+            - Environment: \`${{ matrix.environment }}\`
+            - Directory: \`${{ matrix.terraform_dir }}\`
             
-            let planOutput = "No plan output available";
-            const planFilePath = '${{ matrix.terraform_dir }}/plan-output.txt';
-            
-            try {
-              if (fs.existsSync(planFilePath)) {
-                planOutput = fs.readFileSync(planFilePath, 'utf8');
-              }
-            } catch (error) {
-              console.log('Could not read plan output:', error);
-            }
-            
-            const truncatedOutput = planOutput.length > 10000 ? 
-              planOutput.substring(0, 10000) + '\n\n... (truncated)' : planOutput;
-            
-            const exitCode = '${{ steps.plan.outputs.exitcode }}';
-            let statusEmoji, statusText;
-            
-            if (exitCode === '0') {
-              statusEmoji = '✅';
-              statusText = 'No changes detected';
-            } else if (exitCode === '2') {
-              statusEmoji = '📋';
-              statusText = 'Changes detected - Review required';
-            } else {
-              statusEmoji = '❌';
-              statusText = 'Plan failed';
-            }
-            
-            const comment = `## ${statusEmoji} Terraform Plan: \`${{ matrix.environment }}\`
-            
-            **Status:** ${statusText}
-            **Environment:** \`${{ matrix.environment }}\`
-            **Exit Code:** \`${exitCode}\`
-            
-            <details>
-            <summary>📊 Plan Output (click to expand)</summary>
+            <details><summary>Show Plan</summary>
             
             \`\`\`terraform
-            ${truncatedOutput}
+            ${{ steps.plan.outputs.stdout }}
             \`\`\`
+            
             </details>
             
-            **Workflow:** [\`${{ github.workflow }}\`](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
-            `;
+            *Pusher: @${{ github.actor }}, Action: \`${{ github.event_name }}\`*`;
             
-            // Find and update existing comment or create new one
-            const { data: comments } = await github.rest.issues.listComments({
+            github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-            });
-            
-            const botComment = comments.find(comment => 
-              comment.user.type === 'Bot' && 
-              comment.body.includes('Terraform Plan: `${{ matrix.environment }}`')
-            );
-            
-            if (botComment) {
-              await github.rest.issues.updateComment({
-                comment_id: botComment.id,
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                body: comment
-              });
-            } else {
-              await github.rest.issues.createComment({
-                issue_number: context.issue.number,
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                body: comment
-              });
-            }
-
-  plan-summary:
-    name: "📊 Plan Summary"
-    runs-on: ubuntu-latest
-    needs: [detect-changes, terraform-plan]
-    if: always() && needs.detect-changes.outputs.has_changes == 'true'
-    
-    steps:
-      - name: 📊 Generate Summary
-        run: |
-          echo "## 📋 Terraform Plan Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          plan_result="${{ needs.terraform-plan.result }}"
-          if [ "$plan_result" = "success" ]; then
-            echo "### ✅ Plan Status: Successful" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "### ❌ Plan Status: Failed" >> $GITHUB_STEP_SUMMARY
-          fi
-          
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🎯 Environments Processed:" >> $GITHUB_STEP_SUMMARY
-          
-          environments=$(echo '${{ needs.detect-changes.outputs.environments }}' | jq -r '.[]')
-          for env in $environments; do
-            echo "- \`$env\`" >> $GITHUB_STEP_SUMMARY
-          done
-          
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📋 Next Steps:" >> $GITHUB_STEP_SUMMARY
-          
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "- Review the plan output in PR comments" >> $GITHUB_STEP_SUMMARY
-            echo "- Get required approvals for the PR" >> $GITHUB_STEP_SUMMARY  
-            echo "- Merge to main branch to trigger apply workflow" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "- Review the plan output above" >> $GITHUB_STEP_SUMMARY
-            echo "- Run apply workflow manually if changes look good" >> $GITHUB_STEP_SUMMARY
-          fi
+              body: output
+            })
