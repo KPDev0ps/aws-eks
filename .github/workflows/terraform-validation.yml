@@ -56,21 +56,17 @@ jobs:
       - name: 🎨 Terraform Format Check
         id: fmt
         run: |
+          set -o pipefail
           echo "## 🎨 Terraform Format Check" >> $GITHUB_STEP_SUMMARY
+          terraform fmt -check -recursive -diff | tee /tmp/terraform-fmt.diff
+          status=$?
 
-          if terraform fmt -check -recursive -diff; then
+          if [ $status -eq 0 ]; then
             echo "✅ All files are properly formatted" >> $GITHUB_STEP_SUMMARY
             echo "fmt_status=success" >> $GITHUB_OUTPUT
           else
             echo "❌ Files need formatting. Run: \`terraform fmt -recursive\`" >> $GITHUB_STEP_SUMMARY
             echo "fmt_status=failed" >> $GITHUB_OUTPUT
-
-            # Show detailed diff for PR comment
-            if [ "${{ github.event_name }}" = "pull_request" ]; then
-              echo "FORMAT_DIFF<<EOF" >> $GITHUB_ENV
-              terraform fmt -check -recursive -diff >> $GITHUB_ENV
-              echo "EOF" >> $GITHUB_ENV
-            fi
             exit 1
           fi
 
@@ -79,7 +75,12 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const diff = process.env.FORMAT_DIFF;
+            const fs = require('fs');
+            let diff = 'No diff output available.';
+            const diffPath = '/tmp/terraform-fmt.diff';
+            if (fs.existsSync(diffPath)) {
+              diff = fs.readFileSync(diffPath, 'utf8');
+            }
             const comment = `## 🎨 Terraform Format Check Failed
 
             The following files need to be formatted:
