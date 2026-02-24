@@ -27,7 +27,7 @@ jobs:
 
   sort-changed-files:
     needs: pr-main-merged
-    runs-on: gha-runner-scale-set
+    runs-on: ubuntu-latest
     outputs:
       minor-infra-matrix: ${{ steps.get-tf-changed-dir.outputs.minor-infra }}
       major-infra-matrix: ${{ steps.get-tf-changed-dir.outputs.major-infra }}
@@ -48,7 +48,7 @@ jobs:
     needs:
       - pr-main-merged
       - sort-changed-files
-    runs-on: gha-runner-scale-set
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -93,7 +93,7 @@ jobs:
       - pr-main-merged
       - sort-changed-files
       - tf-plan-minor-infra
-    runs-on: gha-runner-scale-set
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -137,7 +137,7 @@ jobs:
     needs:
       - pr-main-merged
       - sort-changed-files
-    runs-on: gha-runner-scale-set
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -183,7 +183,7 @@ jobs:
       - pr-main-merged
       - sort-changed-files
       - tf-plan-major-infra
-    runs-on: gha-runner-scale-set
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       max-parallel: 1

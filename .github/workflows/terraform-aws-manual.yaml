@@ -66,7 +66,7 @@ permissions:
 jobs:
   terraform:
     name: "${{ inputs.aws_account_name }}-${{ inputs.tf_layer }}-terraform"
-    runs-on: gha-runner-scale-set
+    runs-on: ubuntu-latest
     defaults:
       run:
         shell: bash

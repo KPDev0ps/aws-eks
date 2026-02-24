@@ -23,7 +23,7 @@ permissions:
 
 jobs:
   sort-changed-files:
-    runs-on: gha-runner-scale-set
+    runs-on: ubuntu-latest
     outputs:
       minor-infra-matrix: ${{ steps.get-tf-changed-dir.outputs.minor-infra }}
       major-infra-matrix: ${{ steps.get-tf-changed-dir.outputs.major-infra }}
@@ -42,7 +42,7 @@ jobs:
   tf-plan-minor-infra:
     if: needs.sort-changed-files.outputs.minor-infra-matrix != '[]'
     needs: sort-changed-files
-    runs-on: gha-runner-scale-set
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -84,7 +84,7 @@ jobs:
   tf-plan-major-infra:
     if: needs.sort-changed-files.outputs.major-infra-matrix != '[]'
     needs: sort-changed-files
-    runs-on: gha-runner-scale-set
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       max-parallel: 1
