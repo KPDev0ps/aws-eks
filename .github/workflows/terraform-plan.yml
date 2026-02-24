@@ -1,9 +1,12 @@
 ---
 name: Terraform AWS Plan Overlay
 run-name: >-
-  Terraform AWS Plan Overlay of PR ${{ github.event.pull_request.number }} by @${{ github.actor }}
+  Terraform AWS Plan Overlay by @${{ github.actor }}
 
 on:
+  push:
+    paths:
+      - terraform/aws/overlay/**
   pull_request:
     types:
       - opened
