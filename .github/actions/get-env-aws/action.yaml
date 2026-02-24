@@ -26,50 +26,8 @@ runs:
         # step: get-env-terraform
 
         case ${{ inputs.aws_account_name }} in
-          audit)
-            aws_account_id="575108937278"
-            ;;
-          future-secure-ai)
-            aws_account_id="980921748212"
-            ;;
-          sandbox)
-            aws_account_id="783764599679"
-            ;;
           dev)
-            aws_account_id="682033481043"
-            ;;
-          testing)
-            aws_account_id="050752608492"
-            ;;
-          production)
-            aws_account_id="340752804518"
-            ;;
-          log-archive)
-            aws_account_id="825765388558"
-            ;;
-          network)
-            aws_account_id="650251700893"
-            ;;
-          shared-services)
-            aws_account_id="273354621727"
-            ;;
-          core-network)
-            aws_account_id="589535615578"
-            ;;
-          nam-prod)
-            aws_account_id="942165496123"
-            ;;
-          nam-sit)
-            aws_account_id="996960859408"
-            ;;
-          nam-dev)
-            aws_account_id="409431482481"
-            ;;
-          us-dev)
-            aws_account_id="705522375480"
-            ;;
-          sandbox-uat)
-            aws_account_id="783764599679"
+            aws_account_id="803103365620"
             ;;
 
           esac
