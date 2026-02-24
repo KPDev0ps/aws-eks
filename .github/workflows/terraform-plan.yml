@@ -104,7 +104,6 @@ jobs:
               planOutput.substring(0, 10000) + '\n\n... (truncated)' : planOutput;
             
             const output = `#### Terraform Plan 📖 for \`${{ matrix.environment }}\`
-            - Environment: \`${{ matrix.environment }}\`
             - Directory: \`${{ matrix.terraform_dir }}\`
             
             <details><summary>Show Plan</summary>

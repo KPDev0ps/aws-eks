@@ -64,7 +64,7 @@ jobs:
           filter: terraform/aws/overlay/**
 
   terraform-apply:
-    name: "🚀 Apply (${{ matrix.environment }})"
+    name: "🚀 Apply"
     runs-on: ubuntu-latest
     needs: detect-changes
     if: needs.detect-changes.outputs.has_changes == 'true'
@@ -174,7 +174,6 @@ jobs:
           echo "## ✅ Apply Summary: ${{ matrix.environment }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Status:** ✅ Successfully applied" >> $GITHUB_STEP_SUMMARY
-          echo "**Environment:** \`${{ matrix.environment }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**AWS Region:** \`${{ env.AWS_REGION }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Terraform Directory:** \`${{ matrix.terraform_dir }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Timestamp:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY

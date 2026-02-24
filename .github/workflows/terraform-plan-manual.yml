@@ -1,0 +1,66 @@
+---
+name: Terraform Plan (Manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to plan"
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+permissions:
+  id-token: write
+  contents: read
+  issues: write
+  pull-requests: write
+
+env:
+  AWS_REGION: eu-west-2
+  TF_VERSION: "1.8.0"
+
+jobs:
+  terraform-plan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: "${{ secrets.OIDC_ROLE_ARN }}"
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 3600
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        working-directory: terraform/aws/overlay/${{ inputs.environment }}/eks
+        run: terraform init
+
+      - name: Terraform Validate
+        working-directory: terraform/aws/overlay/${{ inputs.environment }}/eks
+        run: terraform validate
+
+      - name: Terraform Plan
+        working-directory: terraform/aws/overlay/${{ inputs.environment }}/eks
+        run: |
+          set -o pipefail
+          terraform plan -no-color -input=false | tee plan-output.txt
+
+      - name: Plan Summary
+        run: |
+          echo "## Terraform Plan (Manual)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Target:** ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Directory:** terraform/aws/overlay/${{ inputs.environment }}/eks" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "See plan output in job logs." >> $GITHUB_STEP_SUMMARY
