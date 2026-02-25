@@ -1,52 +1,8 @@
-terraform {
-  required_version = ">= 1.5.7"
-
-  backend "s3" {
-    bucket = "terraf0rmstate1"
-    key    = "eks/dev/terraform.tfstate"
-    region = "eu-west-2"
-    # Backend settings should match the shared state bucket.
-    encrypt = true
-  }
-
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = ">= 5.95.0, < 6.0.0"
-    }
-    random = {
-      source  = "hashicorp/random"
-      version = "~> 3.6.1"
-    }
-    tls = {
-      source  = "hashicorp/tls"
-      version = "~> 4.0"
-    }
-    cloudinit = {
-      source  = "hashicorp/cloudinit"
-      version = "~> 2.3.4"
-    }
-    kubernetes = {
-      source  = "hashicorp/kubernetes"
-      version = "~> 2.23"
-    }
-  }
-}
-
-# AWS Provider Configuration
-provider "aws" {
-  region = var.aws_region
-
-  default_tags {
-    tags = {
-      Environment = "dev"
-      Terraform   = "true"
-      Project     = "EKS-DevOps"
-    }
-  }
-}
-
-# Data sources
+# Copyright (c) HashiCorp, Inc.
+# SPDX-License-Identifier: MPL-2.0
+# Provider configuration: use named CLI profile from variables
+# Filter out local zones, which are not currently supported 
+# with managed node groups
 data "aws_availability_zones" "available" {
   filter {
     name   = "opt-in-status"
@@ -54,68 +10,48 @@ data "aws_availability_zones" "available" {
   }
 }
 
-data "aws_caller_identity" "current" {}
-
-# Local values
-locals {
-  environment  = "dev"
-  cluster_name = "${local.environment}-eks-cluster"
-  azs          = slice(data.aws_availability_zones.available.names, 0, 3)
-
-  common_tags = {
-    Environment = local.environment
-    Project     = "EKS-DevOps"
-    ManagedBy   = "terraform"
-    CostCenter  = "development"
-  }
-}
-
-# VPC Module using AWS predefined module
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
-  version = "~> 5.13"
+  version = "5.8.1"
 
   name = var.vpc_name
-  cidr = var.vpc_cidr
 
-  azs             = local.azs
-  private_subnets = var.private_subnets
-  public_subnets  = var.public_subnets
+  cidr = var.vpc_cidr
+  azs  = slice(data.aws_availability_zones.available.names, 0, 3)
+
+  private_subnets = [
+    var.cidr_block_private1,
+    var.cidr_block_private2,
+    var.cidr_block_private3
+  ]
+  public_subnets  = [
+    var.cidr_block_public1,
+    var.cidr_block_public2,
+    var.cidr_block_public3
+  ]
 
   enable_nat_gateway   = var.enable_nat_gateway
   single_nat_gateway   = var.single_nat_gateway
   enable_dns_hostnames = var.enable_dns_hostnames
-  enable_dns_support   = true
 
-  # EKS tags
   public_subnet_tags = {
-    "kubernetes.io/role/elb" = "1"
+    "kubernetes.io/role/elb" = 1
   }
 
   private_subnet_tags = {
-    "kubernetes.io/role/internal-elb" = "1"
+    "kubernetes.io/role/internal-elb" = 1
   }
-
-  tags = local.common_tags
 }
 
-# EKS Module using AWS predefined module
 module "eks" {
   source  = "terraform-aws-modules/eks/aws"
   version = "~> 20.33"
 
-  cluster_name    = local.cluster_name
+  cluster_name    = var.cluster_name
   cluster_version = var.cluster_version
 
-  # Network configuration
-  vpc_id                               = module.vpc.vpc_id
-  subnet_ids                           = module.vpc.private_subnets
-  control_plane_subnet_ids             = module.vpc.private_subnets
-  cluster_endpoint_public_access       = var.cluster_endpoint_public_access
-  cluster_endpoint_private_access      = var.cluster_endpoint_private_access
-  cluster_endpoint_public_access_cidrs = var.cluster_endpoint_public_access_cidrs
+  cluster_endpoint_public_access = true
 
-  # Cluster addons
   cluster_addons = {
     coredns = {
       most_recent = true
@@ -134,63 +70,73 @@ module "eks" {
     }
   }
 
-  # EKS Managed Node Group defaults
+  vpc_id                   = module.vpc.vpc_id
+  subnet_ids               = module.vpc.private_subnets
+  control_plane_subnet_ids = module.vpc.private_subnets
+
+  # EKS Managed Node Group(s)
   eks_managed_node_group_defaults = {
-    instance_types                        = var.node_group_instance_types
+    instance_types                        = var.eks_nodegroup_instance_type
     attach_cluster_primary_security_group = true
-    iam_role_additional_policies = {
-      AmazonEBSCSIDriverPolicy = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
-    }
   }
 
-  # Node security group tags
   node_security_group_tags = {
-    "kubernetes.io/cluster/${local.cluster_name}" = "owned"
+    "kubernetes.io/cluster/${var.cluster_name}" = null
   }
-
   create_iam_role = true
-
-  # EKS Managed Node Groups
   eks_managed_node_groups = {
-    default = {
-      name                     = var.node_group_name
+    node_group = {
+      #name = "default-node-group"
       iam_role_use_name_prefix = false
-      ami_type                 = var.ami_type
-      instance_types           = [var.node_group_instance_type]
-      capacity_type            = var.node_group_capacity_type
-      disk_size                = var.node_group_disk_size
+      # Starting on 1.30, AL2023 is the default AMI type for EKS managed node groups
+      ami_type       = "AL2023_x86_64_STANDARD"
+      instance_types = [var.node_group_instance_type]
+      capacity_type  = var.eks_nodegroup_capacity_type
+      disk_size      = 100
 
       min_size     = var.node_min_size
       max_size     = var.node_max_size
       desired_size = var.node_desired_size
 
+      iam_role_additional_policies = { AmazonEBSCSIDriverPolicy = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy" }
       block_device_mappings = {
         xvda = {
           device_name = "/dev/xvda"
           ebs = {
-            volume_size           = var.node_group_disk_size
+            volume_size           = 100 # Must match disk_size
             volume_type           = "gp3"
             delete_on_termination = true
             encrypted             = true
           }
         }
       }
-
-      tags = merge(
-        local.common_tags,
-        {
-          "kubernetes.io/cluster/${local.cluster_name}" = "owned"
-        }
-      )
     }
+
+    # need to fix the name issue before implementing additional policies, manaully adding policy now
   }
 
   # Cluster access entry
-  enable_cluster_creator_admin_permissions = var.enable_cluster_creator_admin_permissions
+  # To add the current caller identity as an administrator
+  enable_cluster_creator_admin_permissions = true
 
-  # Access entries - customize as needed for your environment
-  access_entries = var.access_entries
+  access_entries = {
+    "MyAccess" = {
+      kubernetes_groups = ["admins"]
+      principal_arn     = "arn:aws:iam::803103365620:role/aws-reserved/sso.amazonaws.com/eu-west-2/AWSReservedSSO_AdministratorAccess_5f7fb06786c4f7b8"
+      user_name         = "arn:aws:sts::803103365620:assumed-role/AWSReservedSSO_AdministratorAccess_5f7fb06786c4f7b8/{{SessionName}}"
+      policy_associations = {
+        "clusterAdmin" = {
+          policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+          access_scope = {
+            type = "cluster"
+          }
+        }
+      }
+  }
+  }
 
-  tags = local.common_tags
+  tags = {
+    Environment = var.environment
+    Terraform   = "true"
+  }
 }
-

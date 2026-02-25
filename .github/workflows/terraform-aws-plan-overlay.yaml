@@ -68,7 +68,7 @@ jobs:
       - name: configure aws credentials
         uses: aws-actions/configure-aws-credentials@v4.0.2
         with:
-          role-to-assume: arn:aws:iam::803103365620:role/GitHubWorkFlowActions
+          role-to-assume: arn:aws:iam::${{ steps.get-env.outputs.aws_account_id }}:role/GitHubWorkFlowActions
           aws-region: ap-southeast-2
 
       - name: terraform plan
@@ -110,7 +110,7 @@ jobs:
       - name: configure aws credentials
         uses: aws-actions/configure-aws-credentials@v4.0.2
         with:
-          role-to-assume: arn:aws:iam::803103365620:role/GitHubWorkFlowActions
+          role-to-assume: arn:aws:iam::${{ steps.get-env.outputs.aws_account_id }}:role/GitHubWorkFlowActions
           aws-region: ap-southeast-2
 
       - name: terraform plan
