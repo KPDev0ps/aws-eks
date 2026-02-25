@@ -1,6 +1,11 @@
 # Copyright (c) HashiCorp, Inc.
 # SPDX-License-Identifier: MPL-2.0
 
+variable "aws_region" {
+  description = "aws eks region"
+  default = "eu-east-2"
+}
+
 variable "cidr_block_private1" {
   description = "CIDR block for private subnet 1"
   type        = string
