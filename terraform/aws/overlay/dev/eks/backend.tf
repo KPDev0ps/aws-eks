@@ -3,7 +3,6 @@ terraform {
     bucket         = "terraf0rmstate1"
     key            = "default-subnet/terraform.tfstate"
     region         = "eu-west-2"
-    use_lockfile   = true
     encrypt        = true
   }
 }
