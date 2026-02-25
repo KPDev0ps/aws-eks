@@ -15,6 +15,7 @@ single_nat_gateway   = true
 enable_dns_hostnames = true
 
 # EKS Cluster Configuration
+cluster_name = "dev-eks-kp"
 cluster_version                      = "1.31"
 cluster_endpoint_public_access       = true
 cluster_endpoint_private_access      = false
