@@ -16,17 +16,7 @@ on:
         default: dev
         options:
           - dev
-          - testing
-          - production
-          - network
-          - shared-services
-          - audit
-          - future-secure-ai
-          - log-archive
-          - nam-dev
-          - nam-sit
-          - nam-prod
-          - us-dev
+          - prod
 
       tf_layer:
         description: >-
