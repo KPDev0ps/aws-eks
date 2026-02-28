@@ -1,9 +1,9 @@
 terraform {
   backend "s3" {
-    bucket         = "terraf0rmstate1"
-    key            = "default-subnet/terraform.tfstate"
-    region         = "eu-west-2"
-    encrypt        = true
+    bucket  = "terraf0rmstate1"
+    key     = "default-subnet/terraform.tfstate"
+    region  = "eu-west-2"
+    encrypt = true
   }
 }
 

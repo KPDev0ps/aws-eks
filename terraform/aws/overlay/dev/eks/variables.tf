@@ -3,7 +3,7 @@
 
 variable "aws_region" {
   description = "aws eks region"
-  default = "eu-east-2"
+  default     = "eu-east-2"
 }
 
 variable "cidr_block_private1" {

@@ -204,6 +204,34 @@ When you receive an approval notification:
 The .github workflows and actions in this repository are synced from the
 cloud-platforms-main source to keep CI behavior consistent.
 
+## 🧩 Platforms in cloud-platforms-main
+
+From [/home/kparmar/cloud-platforms-main](/home/kparmar/cloud-platforms-main), the platforms and stacks currently in use are:
+
+**Terraform providers**
+- aws
+- azure
+- cloudflare
+- datadog
+- jfrog
+
+**Helmfile stacks**
+- argocd-core
+- argocd-meta
+- cnpg-system
+- external-secrets
+- gha-runners
+- kube-system
+- logging
+- minio-system
+- monitoring
+- sample-app
+- sre-networking
+- sre-observability
+- sre-security
+- sre-system
+- vault
+
 ### 🛡️ Approval Gates & Protection
 - **Separate plan/apply workflows** for clear separation of concerns
 - **Environment-based approval requirements** for apply operations (enforced by GitHub Environments)
